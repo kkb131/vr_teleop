@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # xr_teleoperate clone + 서브모듈 + editable install
+#
+# 공식 가이드(https://github.com/unitreerobotics/xr_teleoperate#11--basic)와 절차 동일하되,
+# 우리 환경에서 발견한 호환성 함정 두 가지를 추가로 처리한다:
+#  - vuer 0.0.60는 params-proto>=3에서 ImportError 발생 → params-proto<3 핀
+#  - dex-retargeting은 pin==2.7 / torch==2.3 강제로 시스템 stack을 다운그레이드하므로
+#    INSTALL_DEX_RETARGETING=1 일 때만 설치 (Week 5)
+#
 # Usage:
 #   conda env에서:  conda activate tv && bash setup/install.sh
-#   Docker에서:     bash setup/install.sh   (system pip 사용)
+#   Docker에서:     bash setup/install.sh    (system pip 사용)
+#   Week 5 진입:    INSTALL_DEX_RETARGETING=1 bash setup/install.sh
 
 set -euo pipefail
 
@@ -13,22 +21,7 @@ cd "$REPO_ROOT"
 echo "[install] working dir: $REPO_ROOT"
 echo "[install] python: $(which python3)  $(python3 --version)"
 
-# 0. 핵심 pip 의존성
-# conda env 'tv'를 쓰는 경우: casadi/matplotlib/opencv는 environment.yml의 conda deps로 이미 설치됨 →
-#   pip가 다시 건드리면 'uninstall-no-record-file' 에러 발생하므로 여기선 pip-only 패키지만 처리.
-# system pip 환경(Docker 등): casadi/matplotlib/opencv도 함께 설치 (--upgrade-strategy only-if-needed
-#   로 이미 깔려 있으면 그대로 두기).
-echo "[install] ensuring core pip deps"
-pip install --upgrade-strategy only-if-needed \
-    'vuer[all]==0.0.60' 'params-proto<3' 'meshcat==0.3.2' \
-    'rerun-sdk==0.20.1' sshkeyboard==2.3.1
-
-# casadi/matplotlib/opencv는 conda 설치본이 있으면 건드리지 말 것
-python3 -c "import casadi" 2>/dev/null     || pip install casadi
-python3 -c "import matplotlib" 2>/dev/null || pip install matplotlib==3.7.5
-python3 -c "import cv2" 2>/dev/null        || pip install opencv-python
-
-# 1. xr_teleoperate clone (이미 있으면 skip)
+# ── 1. xr_teleoperate clone ──
 if [ ! -d "xr_teleoperate" ]; then
   echo "[install] cloning xr_teleoperate..."
   git clone https://github.com/unitreerobotics/xr_teleoperate.git
@@ -37,32 +30,33 @@ else
 fi
 
 cd xr_teleoperate
-echo "[install] initializing submodules..."
+echo "[install] initializing submodules (shallow)..."
 git submodule update --init --depth 1
 
-# 2. 서브모듈 editable install
+# ── 2. teleimager (--no-deps, 공식 권장 — Week 9에서 본격 사용) ──
+if [ -d "teleop/teleimager" ]; then
+  echo "[install] pip install -e teleop/teleimager --no-deps"
+  pip install -e teleop/teleimager --no-deps
+fi
+
+# ── 3. televuer (vuer/aiohttp/등 transitive deps 함께 설치) ──
 echo "[install] pip install -e teleop/televuer"
 pip install -e teleop/televuer
 
-# dex-retargeting은 Week 5에서 본격적으로 사용. 현재 Docker처럼 torch/pinocchio가
-# 다른 버전으로 이미 깔린 환경에선 충돌(pin 2.7.0 vs system 3.9.0, torch 2.3 강제 다운)이
-# 발생하므로 INSTALL_DEX_RETARGETING=1 인 경우에만 설치한다. 깨끗한 conda env(환경 tv)는
-# 충돌이 없으므로 README Step E 이후 별도 안내로 설치.
+# ── 4. 호환성 핀: vuer 0.0.60 + params-proto<3 ──
+# televuer가 끌고 들어오는 params-proto가 3.x로 깔리면 vuer.server import 실패. 강제로 2.x로.
+echo "[install] pinning params-proto<3 for vuer 0.0.60 compatibility"
+pip install 'params-proto<3'
+
+# ── 5. dex-retargeting (opt-in, Week 5) ──
 if [ "${INSTALL_DEX_RETARGETING:-0}" = "1" ] && [ -d "teleop/robot_control/dex-retargeting" ]; then
-  echo "[install] pip install -e teleop/robot_control/dex-retargeting (opt-in)"
+  echo "[install] pip install -e teleop/robot_control/dex-retargeting"
   pip install -e teleop/robot_control/dex-retargeting
 else
-  echo "[install] dex-retargeting skip (INSTALL_DEX_RETARGETING=1 로 수동 설치, Week 5)"
+  echo "[install] dex-retargeting skip (Week 5에서 INSTALL_DEX_RETARGETING=1 로 재실행)"
 fi
 
-# 2b. teleimager (멀티카메라 스트리밍, Week 9에서 사용)
-if [ -d "teleop/teleimager" ]; then
-  echo "[install] pip install -e teleop/teleimager"
-  pip install -e teleop/teleimager || \
-    echo "[install] WARN: teleimager install failed — Week 9에서 다시 시도"
-fi
-
-# 3. unitree_sdk2_python (PyPI 우선, 실패 시 GitHub fallback)
+# ── 6. unitree_sdk2_python (PyPI에 없으면 GitHub fallback) ──
 if ! python3 -c "import unitree_sdk2py" >/dev/null 2>&1; then
   echo "[install] installing unitree_sdk2_python..."
   pip install unitree_sdk2_python || {
@@ -74,10 +68,11 @@ else
   echo "[install] unitree_sdk2_python already importable — skipping"
 fi
 
-# 4. numpy 가드: pip 의존성이 numpy 2.x로 끌어올렸으면 강제 다운그레이드
+# ── 7. numpy 가드 ──
+# pip 의존성이 numpy 2.x로 끌어올렸으면 강제 다운그레이드 (pinocchio ABI 호환)
 NUMPY_MAJOR=$(python3 -c "import numpy; print(numpy.__version__.split('.')[0])")
 if [ "$NUMPY_MAJOR" != "1" ]; then
-  echo "[install] numpy $NUMPY_MAJOR.x detected — forcing <2 (pinocchio compatibility)"
+  echo "[install] numpy $NUMPY_MAJOR.x detected — forcing <2"
   pip install 'numpy<2' --force-reinstall --no-deps
 fi
 

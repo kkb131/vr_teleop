@@ -74,11 +74,12 @@ conda env create -f setup/environment.yml
 conda activate tv
 ```
 
-생성되는 환경 `tv`:
+생성되는 환경 `tv` — **공식 README와 동일하게 conda는 3개 패키지만**:
 - Python 3.10
 - pinocchio 3.1.0 (conda-forge)
 - numpy 1.26.4 (pinocchio ABI 호환을 위해 <2 고정)
-- pip로 casadi / meshcat / vuer 0.0.60 / matplotlib / rerun-sdk / sshkeyboard / opencv-python
+
+> 💡 **왜 3개만?** 공식 가이드도 동일. casadi/matplotlib/opencv를 conda로 핀하면 conda-forge에 정확한 patch 버전이 없거나(matplotlib=3.7.5*) transitive dep끼리 RECORD 파일 충돌(`uninstall-no-record-file`)이 납니다. 나머지는 모두 install.sh가 pip로 처리.
 
 ## Step E — xr_teleoperate clone + editable install
 
@@ -86,14 +87,14 @@ conda activate tv
 bash setup/install.sh
 ```
 
-이 스크립트가 수행하는 작업:
-1. 핵심 pip 의존성(`casadi`, `meshcat==0.3.2`, `vuer[all]==0.0.60`, `params-proto<3`, matplotlib 등) 보장 — vuer는 `[all]` 추출 + `params-proto`는 vuer 0.0.60 호환을 위해 2.x 핀
-2. `src/xr_teleop/xr_teleoperate/`에 upstream clone (https://github.com/unitreerobotics/xr_teleoperate)
-3. `git submodule update --init --depth 1` (televuer / dex-retargeting / teleimager)
-4. `pip install -e teleop/televuer`
-5. `unitree_sdk2_python` (PyPI 우선, 실패 시 GitHub fallback)
-6. `teleop/teleimager` editable install (실패 시 경고만, Week 9에서 본격 사용)
-7. numpy 가드 — 의존성으로 numpy 2.x가 들어왔으면 `<2`로 강제 다운그레이드
+이 스크립트가 수행하는 작업 (공식 가이드 절차와 동일):
+1. `src/xr_teleop/xr_teleoperate/`에 upstream clone (https://github.com/unitreerobotics/xr_teleoperate)
+2. `git submodule update --init --depth 1` (televuer / dex-retargeting / teleimager)
+3. `pip install -e teleop/teleimager --no-deps` (공식 권장)
+4. `pip install -e teleop/televuer` — vuer / casadi / meshcat / matplotlib 등이 transitive로 함께 들어옴
+5. **호환성 핀**: `pip install 'params-proto<3'` (vuer 0.0.60는 3.x에서 ImportError)
+6. `unitree_sdk2_python` (PyPI 우선, 실패 시 GitHub fallback)
+7. numpy 가드 — pip가 numpy 2.x로 끌어올렸으면 `<2`로 강제 다운그레이드
 
 > ⚠️ **dex-retargeting는 기본적으로 설치 안 함**: Week 5에서 DG-5F 손 retargeting 작업 시 사용. 깨끗한 conda env(`tv`)에서 `INSTALL_DEX_RETARGETING=1 bash setup/install.sh`로 재실행하면 함께 설치됨. 시스템 torch/pinocchio가 이미 다른 버전으로 깔린 환경(예: 우리 Docker)에서는 충돌이 일어나므로 자동 설치를 막아둠.
 
