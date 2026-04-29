@@ -1,0 +1,17 @@
+name: tv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pinocchio=3.1.0
+  - numpy=1.26.4
+  - pip
+  - pip:
+      - casadi
+      - meshcat==0.3.2
+      - matplotlib==3.7.5
+      - rerun-sdk==0.20.1
+      - sshkeyboard==2.3.1
+      - opencv-python
+      - vuer[all]==0.0.60
+      - params-proto<3        # vuer 0.0.60는 Flag/PrefixProto/Proto가 있는 2.x 시리즈 필요
