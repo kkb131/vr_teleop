@@ -13,10 +13,20 @@ cd "$REPO_ROOT"
 echo "[install] working dir: $REPO_ROOT"
 echo "[install] python: $(which python3)  $(python3 --version)"
 
-# 0. 핵심 pip 의존성 (conda env에선 environment.yml이 처리하지만 system pip 호환을 위해 여기서도 보장)
-echo "[install] ensuring core pip deps: casadi, meshcat, vuer[all], params-proto<3"
-pip install 'vuer[all]==0.0.60' 'params-proto<3' casadi 'meshcat==0.3.2' \
-            matplotlib==3.7.5 'rerun-sdk==0.20.1' sshkeyboard==2.3.1
+# 0. 핵심 pip 의존성
+# conda env 'tv'를 쓰는 경우: casadi/matplotlib/opencv는 environment.yml의 conda deps로 이미 설치됨 →
+#   pip가 다시 건드리면 'uninstall-no-record-file' 에러 발생하므로 여기선 pip-only 패키지만 처리.
+# system pip 환경(Docker 등): casadi/matplotlib/opencv도 함께 설치 (--upgrade-strategy only-if-needed
+#   로 이미 깔려 있으면 그대로 두기).
+echo "[install] ensuring core pip deps"
+pip install --upgrade-strategy only-if-needed \
+    'vuer[all]==0.0.60' 'params-proto<3' 'meshcat==0.3.2' \
+    'rerun-sdk==0.20.1' sshkeyboard==2.3.1
+
+# casadi/matplotlib/opencv는 conda 설치본이 있으면 건드리지 말 것
+python3 -c "import casadi" 2>/dev/null     || pip install casadi
+python3 -c "import matplotlib" 2>/dev/null || pip install matplotlib==3.7.5
+python3 -c "import cv2" 2>/dev/null        || pip install opencv-python
 
 # 1. xr_teleoperate clone (이미 있으면 skip)
 if [ ! -d "xr_teleoperate" ]; then

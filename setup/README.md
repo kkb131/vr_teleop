@@ -161,6 +161,23 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 ```
 인증서 경로는 televuer 코드 또는 환경변수가 가리키는 위치에 둡니다. Galaxy XR Chrome에서 첫 접속 시 "안전하지 않음" 경고를 수동 허용.
 
+### `conda env create` 도중 `cannot uninstall casadi 3.6.7` (uninstall-no-record-file)
+
+원인: conda-forge `pinocchio=3.1.0`이 `casadi`를 **conda 패키지**로 미리 설치하는데, 그 다음 pip 단계에서 같은 패키지를 다시 설치/uninstall하려다 RECORD 파일이 없어 실패.
+
+해결: `casadi`/`matplotlib`/`opencv`는 pip 섹션이 아닌 **conda dependencies**에 두어야 함. 본 폴더의 `environment.yml`이 이미 그렇게 되어 있으니, 만약 옛 environment.yml로 만들었던 env가 있으면 한 번 지우고 다시 생성:
+
+```bash
+conda env remove -n tv
+conda env create -f setup/environment.yml
+```
+
+부분 복구만 하고 싶으면:
+```bash
+conda activate tv
+pip install --ignore-installed casadi   # 또는 conda install -c conda-forge casadi
+```
+
 ### numpy가 2.x로 올라간 경우
 
 ```bash
