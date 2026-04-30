@@ -76,6 +76,15 @@ if [ "$NUMPY_MAJOR" != "1" ]; then
   pip install 'numpy<2' --force-reinstall --no-deps
 fi
 
+# ── 8. SSL 인증서 ── (Galaxy XR Chrome → televuer 서버 HTTPS/WSS 연결용)
+# televuer/vuer는 cert/key 없이 부팅 안 됨. idempotent하므로 매번 호출해도 안전.
+if [ -x "$SCRIPT_DIR/gen_certs.sh" ]; then
+  echo "[install] running gen_certs.sh..."
+  bash "$SCRIPT_DIR/gen_certs.sh" || \
+    echo "[install] WARN: gen_certs.sh failed — bash setup/gen_certs.sh 수동 실행 필요"
+fi
+
 echo ""
 echo "[OK] install complete. Next:"
 echo "     python3 setup/verify.py"
+echo "     python3 setup/test_pose_only.py     # Galaxy XR 연결 후"

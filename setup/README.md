@@ -118,34 +118,65 @@ python3 setup/verify.py
 [PASS] all checks ok
 ```
 
-## Step G — televuer 단독 검증 (Gate 2)
+## Step F.5 — Galaxy XR 인증서 생성
 
-**터미널 1 (PC)**:
+televuer/vuer 서버는 항상 HTTPS+WSS로 부팅하면서 cert/key 파일을 강제 로드한다 (소스: `televuer.py:91`). localhost는 브라우저 쪽에서만 secure context 예외이고, **서버 자체는 cert가 있어야 시작**된다.
+
 ```bash
-# Galaxy XR USB-C 연결 후
-adb devices                      # R3KYA01R62L device 확인
-adb reverse tcp:8012 tcp:8012    # televuer WebSocket 포트
-adb reverse --list               # UsbFfs tcp:8012 tcp:8012 확인
-
-cd src/xr_teleop/xr_teleoperate
-python3 teleop/televuer/test/_test_televuer.py
-# 또는 wrapper 후처리까지 포함:
-# python3 teleop/televuer/test/_test_tv_wrapper.py
+bash setup/gen_certs.sh
+# → ~/.config/xr_teleoperate/cert.pem, key.pem 생성 (CN=localhost)
+# 이미 있으면 skip. 만료 시: bash setup/gen_certs.sh --force
 ```
 
-**Galaxy XR (Chrome)**:
-- `http://localhost:8012` 접속 (adb reverse → localhost는 HTTPS 예외로 평문 OK)
-- 인증서 강제 시 fallback: `https://localhost:8012/?ws=ws://localhost:8012` 후 self-signed 수동 신뢰
+공식 [televuer README §2.2~2.3](../xr_teleoperate/teleop/televuer/README.md)의 Pico/Quest 경로와 동일하되 USB adb reverse 환경에 맞춰 CN을 `localhost`로 고정. AVP rootCA 경로는 불필요.
 
-**Gate 2 통과 조건** (자세한 내용은 `docs/xr_teleoperate_weekly_plan.md` Week 2):
+## Step G — televuer pose-only 검증 (Gate 2)
 
-| 항목 | 통과 기준 |
-|---|---|
-| TeleData 필드 | head/wrist/hand_joints 모두 NaN 없이 채워짐 |
-| 스트리밍 frequency | ≥ 30Hz (10초 평균) |
-| Recovery latency | 시야 이탈 후 < 1초 복귀 |
-| Jitter | 보고 (~1cm 예상) |
-| 좌표계 | wrist xyz 부호/순서 sanity OK |
+업스트림 `example/test_televuer.py`는 teleimager 영상 서버(192.168.123.164)에 의존하므로 Week 9까지는 동작 못 한다. 우리는 영상 의존성을 제거한 [setup/test_pose_only.py](test_pose_only.py)를 사용한다.
+
+### T1 — PC 측 서버 기동
+
+```bash
+# 1) Galaxy XR USB-C 연결 후
+adb devices                          # R3KYA01R62L device 확인
+adb reverse tcp:8012 tcp:8012        # televuer WebSocket
+adb reverse --list                   # UsbFfs tcp:8012 tcp:8012
+
+# 2) televuer pose-only 서버 시작
+conda activate tv                    # (system pip 환경이면 생략)
+cd src/xr_teleop
+python3 setup/test_pose_only.py      # smoke 모드: 1Hz 로그, Ctrl+C로 종료
+```
+
+### T2 — Galaxy XR (Chrome)
+
+1. `https://localhost:8012/?ws=wss://localhost:8012` 접속
+2. self-signed cert 경고 → **고급 → 안전하지 않은 사이트로 이동**
+3. **Enter VR** (또는 화면 좌하단 **pass-through** 버튼) 클릭
+4. 손을 시야 안으로 들이밀어 hand tracking 활성화
+5. PC 터미널에서 Enter → 1Hz 로그가 흐르기 시작 (`OK / OK / OK / OK / OK` + 좌표)
+
+### T3 — Gate 2 정량 측정
+
+```bash
+python3 setup/test_pose_only.py --measure 30 --report docs/week2_report.md
+```
+
+가이드:
+- 30초 자동 측정. 시작 직후 ① 손 자연스럽게 움직이기 → ② 한 번 시야 밖으로 뺐다 다시 들이밀기 (recovery 측정) → ③ 마지막 5초간 손 정지 (jitter 측정)
+- 종료 후 `docs/week2_report.md`에 markdown 표가 append됨
+
+### Gate 2 통과 조건
+
+| 항목 | 측정 | 통과 기준 |
+|---|---|---|
+| 평균 frequency | `mean_freq_hz` | ≥ 30 Hz |
+| Recovery latency | `recovery_latency_s` | < 1.0 s |
+| TeleData 필드 NaN | `nan_per_field` | 모두 0 |
+| Wrist jitter (정지 5초) | `wrist_jitter_cm` | 보고만 (~1 cm 예상) |
+| 좌표계 | smoke 모드 hand_pos[0] 부호 | 손 들었을 때 z 양수 |
+
+자세한 12주 계획상의 통과 조건은 [`docs/xr_teleoperate_weekly_plan.md`](../docs/xr_teleoperate_weekly_plan.md) Week 2 참고.
 
 결과는 `docs/week2_report.md`에 기록.
 
@@ -153,14 +184,28 @@ python3 teleop/televuer/test/_test_televuer.py
 
 ## 트러블슈팅
 
-### televuer가 SSL을 강제할 때
+### `Vuer encountered an error: [Errno 2] No such file or directory`
+
+televuer/vuer 서버가 cert/key 파일을 못 찾을 때. `bash setup/gen_certs.sh` 실행 후 재시도.
+
+### `WARNING Request to 192.168.123.164:60000 timed out or no response`
+
+업스트림 `example/test_televuer.py`가 teleimager 영상 서버를 찾는 메시지. Week 9 멀티카메라 통합 전까지는 무시 가능. **pose-only 검증은 [setup/test_pose_only.py](test_pose_only.py)를 사용**하면 이 경고 자체가 안 나온다.
+
+### Galaxy XR Chrome이 self-signed cert를 거부
+
+1. 첫 시도: 경고 화면에서 "고급 → 안전하지 않은 사이트로 이동"
+2. 위 옵션이 막혀 있으면: chrome://flags 에서 `Allow invalid certificates for resources loaded from localhost` 활성화 후 Chrome 재시작
+3. 그래도 안 되면: cert.pem을 Android Settings → Security → Trusted Credentials로 import
+
+### `wss://` 연결 실패 / WebSocket 끊김
 
 ```bash
-cd src/xr_teleop/xr_teleoperate
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout key.pem -out cert.pem -subj "/CN=localhost"
+adb reverse --list      # UsbFfs tcp:8012 tcp:8012 표시 확인
+# 안 보이면:
+adb kill-server && adb start-server
+adb reverse tcp:8012 tcp:8012
 ```
-인증서 경로는 televuer 코드 또는 환경변수가 가리키는 위치에 둡니다. Galaxy XR Chrome에서 첫 접속 시 "안전하지 않음" 경고를 수동 허용.
 
 ### `conda env create` 도중 `cannot uninstall casadi 3.6.7` (uninstall-no-record-file)
 
