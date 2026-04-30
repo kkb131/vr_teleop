@@ -192,11 +192,27 @@ televuer/vuer 서버가 cert/key 파일을 못 찾을 때. `bash setup/gen_certs
 
 업스트림 `example/test_televuer.py`가 teleimager 영상 서버를 찾는 메시지. Week 9 멀티카메라 통합 전까지는 무시 가능. **pose-only 검증은 [setup/test_pose_only.py](test_pose_only.py)를 사용**하면 이 경고 자체가 안 나온다.
 
-### Galaxy XR Chrome이 self-signed cert를 거부
+### Galaxy XR Chrome에서 "이 페이지가 작동하지 않습니다" — cert 경고조차 안 뜸
 
-1. 첫 시도: 경고 화면에서 "고급 → 안전하지 않은 사이트로 이동"
-2. 위 옵션이 막혀 있으면: chrome://flags 에서 `Allow invalid certificates for resources loaded from localhost` 활성화 후 Chrome 재시작
-3. 그래도 안 되면: cert.pem을 Android Settings → Security → Trusted Credentials로 import
+거의 모든 경우 cert에 **SubjectAltName(SAN) 누락**이 원인. Chrome 58+(특히 Android XR Chrome)은 CN만 있는 self-signed cert를 invalid로 즉시 거부하면서 "고급 → 진행" 옵션조차 표시 안 함. 결과적으로 ERR_EMPTY_RESPONSE에 가까운 빈 페이지만 보임. PC Chrome에서 잘 됐다면 첫 접속 시 통과시킨 cert가 cache되어서일 뿐.
+
+```bash
+bash setup/gen_certs.sh --force      # SAN 포함된 새 cert 생성
+bash setup/diagnose.sh               # PC측 5단계 진단 (cert SAN, vuer LISTEN, HTTPS, adb)
+# televuer 서버 재시작 + Galaxy XR Chrome에서 캐시 비우고 재접속
+```
+
+확인 명령:
+```bash
+openssl x509 -in ~/.config/xr_teleoperate/cert.pem -noout -ext subjectAltName
+# X509v3 Subject Alternative Name:
+#     DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1
+```
+
+여전히 안 되면 (Android XR Chrome strict 모드 우회):
+1. `chrome://flags/#allow-insecure-localhost` enable + Chrome 재시작
+2. `chrome://net-internals/#hsts` → "Delete domain security policies" 에 `localhost` 입력 후 삭제
+3. 그래도 안 되면 cert.pem을 Android Settings → Security → Trusted Credentials로 수동 import (CA 형식 변환 필요 — AVP 경로의 rootCA 방식 적용)
 
 ### `wss://` 연결 실패 / WebSocket 끊김
 

@@ -29,10 +29,16 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[certs] generating self-signed cert (CN=localhost) → $CONF_DIR"
+echo "[certs] generating self-signed cert with SAN (DNS:localhost, IP:127.0.0.1, IP:::1) → $CONF_DIR"
+# Chrome 58+ (특히 Android XR Chrome)은 SubjectAltName 없는 cert를 invalid로 즉시 거부 →
+# cert 경고 화면도 못 띄우고 ERR_EMPTY_RESPONSE 발생. SAN과 serverAuth EKU 명시 필수.
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout "$CONF_DIR/key.pem" -out "$CONF_DIR/cert.pem" \
-  -subj "/CN=localhost" 2>&1 | grep -v "^\.\.\.\.\.\.\.\.\.\.$" || true
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1" \
+  -addext "basicConstraints=CA:FALSE" \
+  -addext "keyUsage=digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth" 2>&1 | grep -v "^\.\.\.\.\.\.\.\.\.\.$" || true
 
 chmod 600 "$CONF_DIR/key.pem"
 chmod 644 "$CONF_DIR/cert.pem"
