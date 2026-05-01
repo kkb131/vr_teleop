@@ -142,19 +142,28 @@ adb devices                          # R3KYA01R62L device 확인
 adb reverse tcp:8012 tcp:8012        # televuer WebSocket
 adb reverse --list                   # UsbFfs tcp:8012 tcp:8012
 
-# 2) televuer pose-only 서버 시작
+# 2) televuer pose-only 서버 시작 — Galaxy XR Chrome은 self-signed HTTPS를
+#    엄격 거부하는 경우가 많아 **plain HTTP 모드 권장** (--http 플래그)
 conda activate tv                    # (system pip 환경이면 생략)
 cd src/xr_teleop
-python3 setup/test_pose_only.py      # smoke 모드: 1Hz 로그, Ctrl+C로 종료
+python3 setup/test_pose_only.py --http   # ← 추천: HTTP 평문, cert 불필요
+# python3 setup/test_pose_only.py        # ← 기본 HTTPS 모드 (cert.pem 필요)
 ```
+
+> 💡 **왜 --http 권장?** Galaxy XR Chrome은 self-signed cert를 SAN까지 추가해도 ERR_EMPTY_RESPONSE로 끊는 사례가 확인됨. localhost는 W3C 사양상 평문 HTTP도 secure context로 인정되어 WebXR API가 그대로 동작. (실제로 Week 1의 webxr-samples 동작 확인이 이 경로.) [vuer.base.py:119-120](../xr_teleoperate/teleop/televuer/src/televuer/televuer.py)에서 cert=None이면 자동 HTTP fallback이라 안전한 우회.
 
 ### T2 — Galaxy XR (Chrome)
 
+`--http` 모드:
+1. `http://localhost:8012` 접속 (cert 경고 없음 — localhost 예외)
+2. **Enter VR** (또는 좌하단 **pass-through**) 클릭
+3. 손을 시야 안에 들이밀어 hand tracking 활성화
+4. PC 터미널에서 Enter → 1Hz 로그가 흐르기 시작 (`OK / OK / OK / OK / OK` + 좌표)
+
+기본 HTTPS 모드 (`--http` 없이 실행한 경우):
 1. `https://localhost:8012/?ws=wss://localhost:8012` 접속
 2. self-signed cert 경고 → **고급 → 안전하지 않은 사이트로 이동**
-3. **Enter VR** (또는 화면 좌하단 **pass-through** 버튼) 클릭
-4. 손을 시야 안으로 들이밀어 hand tracking 활성화
-5. PC 터미널에서 Enter → 1Hz 로그가 흐르기 시작 (`OK / OK / OK / OK / OK` + 좌표)
+3. cert 경고 자체가 안 뜨면 (PC에서) `Ctrl+C` 후 `--http` 모드로 재시작
 
 ### T3 — Gate 2 정량 측정
 

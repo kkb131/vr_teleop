@@ -59,17 +59,24 @@ else
   esac
 fi
 
-# ── 3. PC 자체 HTTPS 핸드셰이크 ────────────────────────────────────────
-hdr "3. PC HTTPS 핸드셰이크 (curl -k https://localhost:${PORT})"
+# ── 3. PC 핸드셰이크 (HTTP/HTTPS 둘 다 시도, 서버 모드 자동 감지) ──────
+hdr "3. PC HTTP/HTTPS 핸드셰이크 (localhost:${PORT})"
 if [ -n "${LISTEN:-}" ]; then
-  CODE=$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 3 \
-         "https://localhost:${PORT}" 2>&1) || CODE="curl_error"
-  case "$CODE" in
-    200|301|302|404) ok "HTTP $CODE — TLS 핸드셰이크 OK"; ((PASS++)) ;;
-    000)             fail "TLS 실패 (CODE=000) — cert 부적합 가능성"; ((FAILS++)) ;;
-    curl_error)      fail "curl 자체 실패 — 서버 응답 없음"; ((FAILS++)) ;;
-    *)               warn "HTTP $CODE — 응답은 받음, 정상 여부 확인 필요" ;;
-  esac
+  HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+              "http://localhost:${PORT}/" 2>/dev/null || echo "000")
+  HTTPS_CODE=$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+               "https://localhost:${PORT}/" 2>/dev/null || echo "000")
+  if [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" != "" ]; then
+    ok "HTTP  $HTTP_CODE — plain HTTP 모드 (Galaxy XR 권장)"
+    ((PASS++))
+  elif [ "$HTTPS_CODE" != "000" ] && [ "$HTTPS_CODE" != "" ]; then
+    ok "HTTPS $HTTPS_CODE — TLS 모드 (cert 필요)"
+    ((PASS++))
+    warn "Galaxy XR Chrome이 self-signed cert 거부 시: --http 모드로 재시작 권장"
+  else
+    fail "HTTP / HTTPS 둘 다 응답 없음 (000) — 서버 부팅 실패"
+    ((FAILS++))
+  fi
 else
   warn "step 2 LISTEN 없으므로 건너뜀"
 fi
@@ -101,11 +108,17 @@ fi
 hdr "요약"
 TOTAL=$((PASS + FAILS))
 if [ "$FAILS" -eq 0 ]; then
-  ok "모든 단계 통과 ($PASS/$TOTAL). Galaxy XR Chrome → https://localhost:${PORT} 접속 시 cert 경고 한 번 통과 후 vuer 페이지 로드되어야 함"
+  ok "모든 단계 통과 ($PASS/$TOTAL)"
   echo
-  echo "여전히 'no data' 가 뜬다면:"
-  echo "  - chrome://flags/#allow-insecure-localhost   enable + Chrome 재시작"
-  echo "  - chrome://net-internals/#hsts               'Delete domain security policies' 에 localhost 입력 후 삭제"
+  if [ "${HTTP_CODE:-000}" != "000" ] && [ -n "${HTTP_CODE:-}" ]; then
+    echo "  Galaxy XR Chrome → http://localhost:${PORT}     (cert 경고 없음, 권장)"
+  else
+    echo "  Galaxy XR Chrome → https://localhost:${PORT}    (cert 경고 → '고급 → 진행')"
+    echo "    cert 경고 자체가 안 뜨거나 'no data' 표시 시:"
+    echo "      - PC에서 Ctrl+C 후 'python3 setup/test_pose_only.py --http' 로 재시작 (권장)"
+    echo "      - chrome://flags/#allow-insecure-localhost   enable + Chrome 재시작"
+    echo "      - chrome://net-internals/#hsts               'Delete domain security policies' 에 localhost 입력"
+  fi
   exit 0
 else
   fail "$FAILS 개 단계 실패 ($PASS/$TOTAL). 위 메시지 따라 수정 후 재실행"

@@ -38,6 +38,9 @@ def _parse_args() -> argparse.Namespace:
                    help="N초간 자동 측정 후 종료")
     p.add_argument("--report", type=str, default=None,
                    help="측정 결과를 markdown으로 append할 파일 경로")
+    p.add_argument("--http", action="store_true",
+                   help="HTTPS 대신 plain HTTP로 서버 부팅 (Galaxy XR Chrome이 self-signed cert를 "
+                        "거부할 때 우회용; localhost는 W3C 사양상 HTTP도 secure context로 인정됨)")
     return p.parse_args()
 
 
@@ -54,11 +57,35 @@ from pathlib import Path
 import numpy as np
 
 try:
+    import televuer.televuer as _tv_mod
     from televuer import TeleVuer
 except ImportError as e:
     print(f"[ERR] cannot import televuer: {e}")
     print("       먼저 'bash setup/install.sh' 수행 후 재시도")
     sys.exit(1)
+
+
+def _force_plain_http() -> None:
+    """televuer가 vuer.Vuer를 호출할 때 cert/key를 무시하고 None을 전달하도록 monkey-patch.
+
+    televuer __init__(line 71-89)이 항상 cert_file/key_file을 non-None 경로로 채워서
+    Vuer(cert=...)를 부르는데, vuer.base.py:119는 `if not self.cert:` 분기에서 plain HTTP
+    TCPSite로 떨어진다. 따라서 Vuer 호출 시점에서 cert/key를 None으로 강제 치환하면 OK.
+    """
+    _OrigVuer = _tv_mod.Vuer
+
+    class _PlainHTTPVuer(_OrigVuer):
+        def __init__(self, *args, **kwargs):
+            kwargs["cert"] = None
+            kwargs["key"] = None
+            super().__init__(*args, **kwargs)
+
+    _tv_mod.Vuer = _PlainHTTPVuer
+    print("[init] HTTP mode (plain) — cert/key forced to None")
+
+
+if _ARGS.http:
+    _force_plain_http()
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
@@ -269,9 +296,15 @@ def main() -> int:
     )
 
     print()
-    print("[init] Galaxy XR Chrome:")
-    print("       https://localhost:8012/?ws=wss://localhost:8012")
-    print("       (self-signed cert 경고 → '고급 → 진행')")
+    if args.http:
+        print("[init] Galaxy XR Chrome:")
+        print("       http://localhost:8012")
+        print("       (HTTP 평문 — localhost는 W3C secure context 예외, cert 경고 없음)")
+    else:
+        print("[init] Galaxy XR Chrome:")
+        print("       https://localhost:8012/?ws=wss://localhost:8012")
+        print("       (self-signed cert 경고 → '고급 → 진행')")
+        print("       cert 경고 자체가 안 뜨면 --http 옵션으로 재시도")
     print("       'Enter VR' 또는 'pass-through' 버튼 클릭 후 손 들이밀기")
     input("[init] PC에서 Enter 누르면 폴링 시작... ")
 

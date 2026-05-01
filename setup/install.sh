@@ -87,5 +87,5 @@ fi
 echo ""
 echo "[OK] install complete. Next:"
 echo "     python3 setup/verify.py"
-echo "     python3 setup/test_pose_only.py     # Galaxy XR 연결 후"
-echo "     bash setup/diagnose.sh              # connectivity 5단계 점검 (test_pose_only 실행 중에)"
+echo "     python3 setup/test_pose_only.py --http   # Galaxy XR 연결 후 (HTTP 권장)"
+echo "     bash setup/diagnose.sh                   # connectivity 점검 (서버 실행 중일 때)"
