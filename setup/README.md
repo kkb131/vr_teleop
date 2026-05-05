@@ -189,9 +189,20 @@ python3 setup/test_pose_only.py --http --debug --measure 30
 
 | 출력 패턴 | 시나리오 | 처방 |
 |---|---|---|
-| `cam=0, hand=0` | **B** — vuer client가 stream=True 이벤트를 서버로 안 보냄 | `hideLeft/Right=False` 또는 `display_mode="immersive"+webrtc` 우회 |
-| `cam>0` 인데 `errors`도 비슷 | **A** — `event.value` 구조가 코드 가정과 다름 | 출력된 `first event.value` dump + traceback 보고 핸들러 보정 |
-| `cam>0, errors=0`인데 lost 100% | **C** — Process 분리에서 shared array 미공유 | vuer를 단일 process로 띄우는 wrapper 작성 |
+| `cam=0, hand=0` | **B 전체** — WebXR session 자체가 client에서 시작 안 됨 | "Enter VR" 정확히 눌렀는지, hand-tracking 권한 허용했는지 확인 |
+| `cam>0, hand=0`, lost: head=0 / 나머지 100% | **B 한정** — head_pose는 정상이나 HAND_MOVE 미수신 | **`--show-hands` 추가** (Hands hideLeft/Right=False로 monkey-patch) |
+| `cam>0` + `errors`도 비슷 | **A** — `event.value` 구조 mismatch | 출력된 `first event.value` dump + traceback 보고 핸들러 보정 |
+| `cam>0, hand>0, errors=0`인데 lost 100% | **C** — Process 분리에서 shared array 미공유 | vuer 단일 process wrapper 작성 |
+
+#### `--show-hands` 사용 예 (시나리오 B 한정 처방)
+
+```bash
+python3 setup/test_pose_only.py --http --debug --show-hands --measure 30 --report docs/week2_report.md
+```
+
+- vuer Hands 컴포넌트의 `hideLeft/hideRight=False`로 강제. vuer 0.0.60 docstring상 "hides the hand, but still streams the data"이지만 일부 헤드셋(Quest 3 등)에서 stream까지 막히는 케이스가 확인됨.
+- 적용 시 `[init] main_pass_through patched: Hands(hideLeft=False, hideRight=False)` 메시지 확인.
+- 적용 후 `on_hand_move calls`가 0에서 양수로 바뀌면 가설 확정.
 
 ### Gate 2 통과 조건
 

@@ -44,6 +44,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--debug", action="store_true",
                    help="vuer CAMERA_MOVE/HAND_MOVE 핸들러 호출 카운트 + 첫 이벤트 구조 dump + "
                         "기존 try/except가 묻는 예외 traceback 출력 (Lost frames 100%% 디버깅용)")
+    p.add_argument("--show-hands", action="store_true",
+                   help="main_pass_through의 Hands 컴포넌트를 hideLeft=False, hideRight=False로 "
+                        "monkey-patch (Quest 3 Chrome에서 hideLeft=True가 stream까지 막는 케이스 우회)")
     return p.parse_args()
 
 
@@ -158,10 +161,51 @@ def _install_debug_handlers() -> None:
     print("[debug] handler monkey-patch installed (class-level)")
 
 
+def _patch_hands_show() -> None:
+    """main_pass_through의 Hands(hideLeft=True, hideRight=True)를 False/False로 교체.
+
+    가설: vuer 0.0.60 + Quest 3 Chrome에서 hideLeft/Right=True가 시각화뿐만 아니라
+    stream까지 막아 HAND_MOVE 이벤트가 server로 안 옴. vuer docstring상으로는
+    'hides the hand, but still streams the data'이지만 실제 동작 차이를 검증.
+    """
+    from vuer.schemas import Hands, MotionControllers
+    import asyncio
+    _OrigTV = _tv_mod.TeleVuer
+
+    async def _patched_main_pass_through(self, session):
+        if self.use_hand_tracking:
+            session.upsert(
+                Hands(
+                    stream=True,
+                    key="hands",
+                    hideLeft=False,    # ← changed from True
+                    hideRight=False,   # ← changed from True
+                ),
+                to="bgChildren",
+            )
+        else:
+            session.upsert(
+                MotionControllers(
+                    stream=True,
+                    key="motionControllers",
+                    left=True,
+                    right=True,
+                ),
+                to="bgChildren",
+            )
+        while True:
+            await asyncio.sleep(1.0 / self.display_fps)
+
+    _OrigTV.main_pass_through = _patched_main_pass_through
+    print("[init] main_pass_through patched: Hands(hideLeft=False, hideRight=False)")
+
+
 if _ARGS.http:
     _force_plain_http()
 if _ARGS.debug:
     _install_debug_handlers()
+if _ARGS.show_hands:
+    _patch_hands_show()
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
@@ -414,17 +458,21 @@ def main() -> int:
             print(f"  on_hand_move calls={hand:>6}  errors={hand_e:>4}")
             print()
             if cam == 0 and hand == 0:
-                print("  → 시나리오 B: vuer client가 stream=True 이벤트를 server로 보내지 않음.")
-                print("    가능한 원인: hideLeft/Right=True 영향, plain HTTP secure-context 제한 등.")
-                print("    다음 시도: hideLeft=False / display_mode='immersive'+webrtc 우회.")
-            elif cam_e == cam and hand_e == hand and cam > 0:
-                print("  → 시나리오 A: 이벤트는 들어오지만 event.value 구조가 코드 가정과 다름.")
-                print("    위에 traceback과 'first event.value' dump를 보고 핸들러 보정 필요.")
-            elif cam > 0 or hand > 0:
-                print(f"  → 핸들러는 호출됨 (cam={cam}, hand={hand}). lost가 여전히 100%이면")
-                print("    시나리오 C: Process 분리에서 shared array가 메인까지 전파 안 됨.")
+                print("  → 시나리오 B (전체): vuer client가 어떤 이벤트도 server로 안 보냄.")
+                print("    원인: WebXR session 자체가 client에서 시작 안 됐거나 stream=True 무시.")
+                print("    다음 시도: Quest 3에서 'Enter VR' 정확히 눌렀는지, hand-tracking 권한 허용했는지 확인.")
+            elif cam > 0 and hand == 0:
+                print("  → 시나리오 B (hand 한정): WebXR session OK / head_pose 정상.")
+                print("    그러나 HAND_MOVE 이벤트가 server에 안 옴 — Hands 컴포넌트 stream 미작동.")
+                print("    다음 시도: --show-hands 추가 (hideLeft/Right=False로 monkey-patch)")
+            elif cam_e >= cam * 0.9 and cam > 0:
+                print("  → 시나리오 A: 이벤트 들어오는데 event.value 구조가 코드 가정과 다름.")
+                print("    위 traceback과 'first event.value' dump를 보고 핸들러 보정 필요.")
+            elif (cam > 0 or hand > 0) and cam_e + hand_e == 0:
+                print(f"  → 핸들러 호출 + 파싱 정상 (cam={cam}, hand={hand}, errors=0).")
+                print("    lost가 여전히 100%이면 시나리오 C: Process 분리 / shared array 미공유.")
             else:
-                print("  → 분류 불가. 위 카운터/traceback을 사용자에게 공유.")
+                print("  → 분류 불가. 위 카운터/traceback을 공유해주세요.")
     return 0
 
 
