@@ -229,6 +229,46 @@ vuer Hands 컴포넌트의 `hideLeft/hideRight=False`로 강제. **Quest 3 + 정
 
 ---
 
+## Step H — IsaacSim G1+Dex3-1 통합 검증 (Week 3 / Gate 3)
+
+전제: 같은 host에서 별도 docker container로 `unitree_sim_isaaclab`이 sim_main.py로 G1+Dex3-1 환경 구동 중. 자세한 sim host 측 설정은 [`docs/INTEGRATION_FOR_XR_TELEOPERATE.md`](../docs/INTEGRATION_FOR_XR_TELEOPERATE.md) 참조.
+
+**T1 — DDS 환경 변수**
+
+```bash
+source setup/dds_env.sh   # RMW_IMPLEMENTATION + ROS_DOMAIN_ID=1
+```
+
+**T2 — sim 통신 자동 진단**
+
+```bash
+python3 setup/test_dds_sim.py
+# 기대 결과:
+#   A. DDS LowState ~94 Hz (3초간 ~280 msgs)
+#   B. ZMQ camera frames (head/left/right 모두 응답)
+#   C. passive LowCmd publish 50회 (sim 콘솔에 에러 없으면 OK)
+```
+
+3/3 단계 통과해야 Step H의 다음 단계로 진입.
+
+**T3 — xr_teleoperate teleop 시작**
+
+```bash
+adb reverse tcp:8012 tcp:8012
+cd xr_teleoperate
+python teleop/teleop_hand_and_arm.py --ee=dex3 --sim --img-server-ip 127.0.0.1
+```
+
+**T4 — Quest 3/Galaxy XR Chrome에서 hand teleop**
+
+1. 서버 부팅 메시지의 정확한 URL로 접속 (vuer.ai 도메인 직접 접속 금지 — Step T4 트러블슈팅 표 참고)
+2. cert 경고 거부되면 `--http` 동등 우회 필요. 업스트림 teleop_hand_and_arm.py에 `--http` 옵션 없으면 우리 wrapper로 monkey-patch (Week 2의 test_pose_only.py 기법 동일)
+3. Enter VR → 손 들이밀기 → IsaacSim 화면에서 G1 팔과 Dex3-1 손가락이 따라 움직이는지 시각 확인
+
+**Gate 3 통과 조건**: Quest 3 hand tracking → IsaacSim 안의 G1+Dex3-1 자연스러운 teleop 1회 이상 시각 확인 + 30 Hz 이상 안정 동작.
+
+---
+
 ## 트러블슈팅
 
 ### `Vuer encountered an error: [Errno 2] No such file or directory`
