@@ -41,6 +41,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--http", action="store_true",
                    help="HTTPS 대신 plain HTTP로 서버 부팅 (Galaxy XR Chrome이 self-signed cert를 "
                         "거부할 때 우회용; localhost는 W3C 사양상 HTTP도 secure context로 인정됨)")
+    p.add_argument("--debug", action="store_true",
+                   help="vuer CAMERA_MOVE/HAND_MOVE 핸들러 호출 카운트 + 첫 이벤트 구조 dump + "
+                        "기존 try/except가 묻는 예외 traceback 출력 (Lost frames 100%% 디버깅용)")
     return p.parse_args()
 
 
@@ -84,8 +87,81 @@ def _force_plain_http() -> None:
     print("[init] HTTP mode (plain) — cert/key forced to None")
 
 
+# ── debug counters (cross-process shared) ─────────────────────────────────
+import multiprocessing as _mp
+
+DEBUG_COUNTERS = {
+    "cam":      _mp.Value("i", 0),
+    "hand":     _mp.Value("i", 0),
+    "cam_err":  _mp.Value("i", 0),
+    "hand_err": _mp.Value("i", 0),
+}
+# 샘플 dump를 child process에서 한 번만 출력하도록 제어하는 flag
+DEBUG_SAMPLED = {"cam": _mp.Value("b", 0), "hand": _mp.Value("b", 0)}
+
+
+def _install_debug_handlers() -> None:
+    """TeleVuer.on_cam_move / on_hand_move를 클래스 레벨에서 monkey-patch.
+
+    핵심: TeleVuer.__init__이 self.vuer.add_handler(self.on_cam_move)를 부르는
+    시점에 patch된 메서드가 등록되어야 함. 인스턴스 생성 후 add_handler를 덮어쓰면
+    이미 fork된 child process에는 도달 못 함. 따라서 클래스 메서드 자체를 교체.
+    """
+    _OrigTV = _tv_mod.TeleVuer
+    _orig_cam = _OrigTV.on_cam_move
+    _orig_hand = _OrigTV.on_hand_move
+
+    async def _cam_debug(self, event, session, fps=60):
+        with DEBUG_COUNTERS["cam"].get_lock():
+            DEBUG_COUNTERS["cam"].value += 1
+        # 첫 호출 시 event.value 구조 한 번만 dump
+        with DEBUG_SAMPLED["cam"].get_lock():
+            if not DEBUG_SAMPLED["cam"].value:
+                DEBUG_SAMPLED["cam"].value = 1
+                print(f"[debug] on_cam_move first event.value: {repr(event.value)[:500]}",
+                      flush=True)
+        try:
+            with self.head_pose_shared.get_lock():
+                self.head_pose_shared[:] = event.value["camera"]["matrix"]
+        except Exception:
+            with DEBUG_COUNTERS["cam_err"].get_lock():
+                DEBUG_COUNTERS["cam_err"].value += 1
+                if DEBUG_COUNTERS["cam_err"].value <= 3:
+                    import traceback
+                    traceback.print_exc()
+
+    async def _hand_debug(self, event, session, fps=60):
+        with DEBUG_COUNTERS["hand"].get_lock():
+            DEBUG_COUNTERS["hand"].value += 1
+        with DEBUG_SAMPLED["hand"].get_lock():
+            if not DEBUG_SAMPLED["hand"].value:
+                DEBUG_SAMPLED["hand"].value = 1
+                v = event.value
+                keys = list(v.keys()) if hasattr(v, "keys") else type(v).__name__
+                print(f"[debug] on_hand_move first event.value keys: {keys}", flush=True)
+                if hasattr(v, "keys"):
+                    for k in keys:
+                        sub = v[k]
+                        sub_repr = repr(sub)[:200] if not hasattr(sub, "__len__") else f"<len={len(sub)}>"
+                        print(f"[debug]   {k}: {type(sub).__name__} {sub_repr}", flush=True)
+        try:
+            await _orig_hand(self, event, session, fps)
+        except Exception:
+            with DEBUG_COUNTERS["hand_err"].get_lock():
+                DEBUG_COUNTERS["hand_err"].value += 1
+                if DEBUG_COUNTERS["hand_err"].value <= 3:
+                    import traceback
+                    traceback.print_exc()
+
+    _OrigTV.on_cam_move = _cam_debug
+    _OrigTV.on_hand_move = _hand_debug
+    print("[debug] handler monkey-patch installed (class-level)")
+
+
 if _ARGS.http:
     _force_plain_http()
+if _ARGS.debug:
+    _install_debug_handlers()
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
@@ -327,6 +403,28 @@ def main() -> int:
             tv.close()
         except Exception:
             pass
+        if args.debug:
+            cam = DEBUG_COUNTERS["cam"].value
+            hand = DEBUG_COUNTERS["hand"].value
+            cam_e = DEBUG_COUNTERS["cam_err"].value
+            hand_e = DEBUG_COUNTERS["hand_err"].value
+            print()
+            print("─── debug summary ───")
+            print(f"  on_cam_move  calls={cam:>6}  errors={cam_e:>4}")
+            print(f"  on_hand_move calls={hand:>6}  errors={hand_e:>4}")
+            print()
+            if cam == 0 and hand == 0:
+                print("  → 시나리오 B: vuer client가 stream=True 이벤트를 server로 보내지 않음.")
+                print("    가능한 원인: hideLeft/Right=True 영향, plain HTTP secure-context 제한 등.")
+                print("    다음 시도: hideLeft=False / display_mode='immersive'+webrtc 우회.")
+            elif cam_e == cam and hand_e == hand and cam > 0:
+                print("  → 시나리오 A: 이벤트는 들어오지만 event.value 구조가 코드 가정과 다름.")
+                print("    위에 traceback과 'first event.value' dump를 보고 핸들러 보정 필요.")
+            elif cam > 0 or hand > 0:
+                print(f"  → 핸들러는 호출됨 (cam={cam}, hand={hand}). lost가 여전히 100%이면")
+                print("    시나리오 C: Process 분리에서 shared array가 메인까지 전파 안 됨.")
+            else:
+                print("  → 분류 불가. 위 카운터/traceback을 사용자에게 공유.")
     return 0
 
 
