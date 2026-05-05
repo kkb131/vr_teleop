@@ -45,8 +45,10 @@ def _parse_args() -> argparse.Namespace:
                    help="vuer CAMERA_MOVE/HAND_MOVE 핸들러 호출 카운트 + 첫 이벤트 구조 dump + "
                         "기존 try/except가 묻는 예외 traceback 출력 (Lost frames 100%% 디버깅용)")
     p.add_argument("--show-hands", action="store_true",
-                   help="main_pass_through의 Hands 컴포넌트를 hideLeft=False, hideRight=False로 "
-                        "monkey-patch (Quest 3 Chrome에서 hideLeft=True가 stream까지 막는 케이스 우회)")
+                   help="(experimental) main_pass_through의 Hands 컴포넌트를 hideLeft=False, "
+                        "hideRight=False로 monkey-patch. Quest 3 + 정확한 URL로는 hand stream이 "
+                        "정상 동작하므로 보통 불필요. hideLeft=True가 stream까지 막는 환경이 "
+                        "발견됐을 때만 사용")
     return p.parse_args()
 
 
@@ -162,11 +164,11 @@ def _install_debug_handlers() -> None:
 
 
 def _patch_hands_show() -> None:
-    """main_pass_through의 Hands(hideLeft=True, hideRight=True)를 False/False로 교체.
+    """(experimental) main_pass_through의 Hands(hideLeft=True, hideRight=True)를 False/False로 교체.
 
-    가설: vuer 0.0.60 + Quest 3 Chrome에서 hideLeft/Right=True가 시각화뿐만 아니라
-    stream까지 막아 HAND_MOVE 이벤트가 server로 안 옴. vuer docstring상으로는
-    'hides the hand, but still streams the data'이지만 실제 동작 차이를 검증.
+    Quest 3 + 정확한 URL에서는 hideLeft=True여도 stream이 정상 동작함이 실측으로
+    확인됨 (week2_report.md의 22:15, 22:18 측정). 따라서 일반적으로는 불필요.
+    그러나 hideLeft=True가 stream까지 막는 헤드셋이 발견될 가능성에 대비해 유지.
     """
     from vuer.schemas import Hands, MotionControllers
     import asyncio

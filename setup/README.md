@@ -177,9 +177,18 @@ python3 setup/test_pose_only.py --http --measure 30 --report docs/week2_report.m
 
 > ⚠️ **결과 해석 주의**: 보고서의 NaN=0 / Hz≥30만 보고 "성공"이라 판단하지 말 것. **Lost frames per field가 전체 프레임 수와 같으면(예: `5571 / 5571`) 30초 동안 단 한 프레임도 실제 pose를 못 받은 것** — Hz는 Python 폴링 속도일 뿐이고 shared array가 zeros 초기값 그대로일 때도 NaN=0으로 표시됨. 이 경우 `--debug` 절차로 진행.
 
-### T4 — Lost frames 100% 디버그 (vuer 핸들러 silent failure 추적)
+### T4 — Lost frames 100% 트러블슈팅
 
-[televuer.py](../xr_teleoperate/teleop/televuer/src/televuer/televuer.py)의 `on_cam_move`/`on_hand_move`가 `try: ... except: pass`로 감싸져 있어 이벤트 파싱 실패가 묻힙니다. `--debug` 플래그로 핸들러 호출 횟수와 첫 이벤트 구조를 노출해 원인 파악:
+> 🔥 **가장 흔한 원인: 잘못된 URL.** Lost가 전체 프레임 수와 같으면 server에 WebSocket 연결 자체가 안 된 상태입니다 (Hz/NaN은 정상처럼 보일 수 있음 — Hz는 Python 폴링 속도, NaN은 zeros 초기값에서도 0). **먼저 URL부터 정확히 확인**:
+>
+> | 모드 | 정확한 URL |
+> |---|---|
+> | `--http` | `http://localhost:8012` |
+> | 기본 (HTTPS) | `https://localhost:8012/?ws=wss://localhost:8012` |
+>
+> ❌ **하지 말 것**: vuer 부팅 메시지 `Visit: https://vuer.ai?grid=False`의 `vuer.ai` 도메인 직접 접속. 이건 vuer-ai 호스팅 frontend로 우리 local server와 별개이며, 환경에 따라 WebSocket이 우리 server에 안 붙음.
+
+URL이 정확한데도 Lost가 100%면 [televuer.py](../xr_teleoperate/teleop/televuer/src/televuer/televuer.py)의 `on_cam_move`/`on_hand_move`가 `try: ... except: pass`로 감싸져 있어 이벤트 파싱 실패가 묻힐 가능성. `--debug` 플래그로 핸들러 호출 횟수와 첫 이벤트 구조를 노출해 원인 파악:
 
 ```bash
 python3 setup/test_pose_only.py --http --debug --measure 30
@@ -189,20 +198,20 @@ python3 setup/test_pose_only.py --http --debug --measure 30
 
 | 출력 패턴 | 시나리오 | 처방 |
 |---|---|---|
-| `cam=0, hand=0` | **B 전체** — WebXR session 자체가 client에서 시작 안 됨 | "Enter VR" 정확히 눌렀는지, hand-tracking 권한 허용했는지 확인 |
-| `cam>0, hand=0`, lost: head=0 / 나머지 100% | **B 한정** — head_pose는 정상이나 HAND_MOVE 미수신 | **`--show-hands` 추가** (Hands hideLeft/Right=False로 monkey-patch) |
+| `cam=0, hand=0` | **B 전체** — WebSocket 미연결 또는 WebXR session 미시작 | (1) URL 재확인 — 위 박스 표 (2) "Enter VR" 정확히 눌렀는지, hand-tracking 권한 허용했는지 확인 |
+| `cam>0, hand=0`, lost: head=0 / 나머지 100% | **B 한정** (드물게) | 일반적으로는 잘못된 URL일 가능성 크니 URL부터 재검증. 그래도 동일하면 `--show-hands` (experimental) 시도 |
 | `cam>0` + `errors`도 비슷 | **A** — `event.value` 구조 mismatch | 출력된 `first event.value` dump + traceback 보고 핸들러 보정 |
 | `cam>0, hand>0, errors=0`인데 lost 100% | **C** — Process 분리에서 shared array 미공유 | vuer 단일 process wrapper 작성 |
 
-#### `--show-hands` 사용 예 (시나리오 B 한정 처방)
+> 📊 **실측 사례 (Quest 3, 2026-05-05)**: 정확한 URL(`http://localhost:8012`)로 접속 시 cam>0, hand>0, lost=0/모든 필드, 192Hz로 Gate 2 통과 확인 (week2_report.md 22:15, 22:18). 이전 100% lost runs는 모두 **wrong URL artifact**였음 — `vuer.ai` 호스팅 페이지로 잘못 들어간 케이스.
+
+#### `--show-hands` (experimental) 사용 예
 
 ```bash
-python3 setup/test_pose_only.py --http --debug --show-hands --measure 30 --report docs/week2_report.md
+python3 setup/test_pose_only.py --http --debug --show-hands --measure 30
 ```
 
-- vuer Hands 컴포넌트의 `hideLeft/hideRight=False`로 강제. vuer 0.0.60 docstring상 "hides the hand, but still streams the data"이지만 일부 헤드셋(Quest 3 등)에서 stream까지 막히는 케이스가 확인됨.
-- 적용 시 `[init] main_pass_through patched: Hands(hideLeft=False, hideRight=False)` 메시지 확인.
-- 적용 후 `on_hand_move calls`가 0에서 양수로 바뀌면 가설 확정.
+vuer Hands 컴포넌트의 `hideLeft/hideRight=False`로 강제. **Quest 3 + 정확한 URL에서는 hideLeft=True여도 stream이 정상 동작함이 확인되어 보통 불필요**. hideLeft=True가 stream까지 막는 헤드셋이 발견될 가능성에 대비해 옵션으로만 유지.
 
 ### Gate 2 통과 조건
 
