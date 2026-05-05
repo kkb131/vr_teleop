@@ -6,5 +6,6 @@ channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - pinocchio=3.1.0
+  - pinocchio=3.1.0          # casadi backend 자동 포함 (conda-forge build)
   - numpy=1.26.4
+  - pip                       # conda env에 pip를 명시적으로 (없으면 'No module named pip')

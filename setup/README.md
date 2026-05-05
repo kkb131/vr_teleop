@@ -251,21 +251,45 @@ python3 setup/test_dds_sim.py
 
 3/3 단계 통과해야 Step H의 다음 단계로 진입.
 
-**T3 — xr_teleoperate teleop 시작**
+**T3 — xr_teleoperate teleop 시작 (우리 wrapper 사용)**
 
 ```bash
+# conda env tv 활성화 + DDS env (먼저 source dds_env.sh로)
+conda activate tv
+source setup/dds_env.sh
+
+# adb reverse는 헤드셋 연결된 PC에서
 adb reverse tcp:8012 tcp:8012
-cd xr_teleoperate
-python teleop/teleop_hand_and_arm.py --ee=dex3 --sim --img-server-ip 127.0.0.1
+
+# 우리 wrapper로 실행 — --http monkey-patch + --img-server-ip 127.0.0.1 default 자동
+python setup/run_teleop.py --ee dex3 --sim
+# 내부 호출:
+#   cd xr_teleoperate/teleop
+#   python teleop_hand_and_arm.py --img-server-ip 127.0.0.1 --ee dex3 --sim
+# (vuer가 plain HTTP로 부팅, cert 거부 우회)
+```
+
+부팅 시 이 메시지들이 순서대로 보여야 정상:
+```
+[run_teleop] HTTP mode (plain) — vuer cert/key forced to None
+[run_teleop] cwd → .../xr_teleoperate/teleop
+INFO  Received camera config from server 127.0.0.1:60000
+INFO  [G1_29_ArmIK] >>> Loading cached/URDF
+INFO  [G1_29_ArmController] Subscribe dds ok
+INFO  Initialize Dex3_1_Controller OK!
+INFO  [SimStateSubscriber] Started subscribing to rt/sim_state
+🟢  Press [r] to start syncing the robot with your movements.
 ```
 
 **T4 — Quest 3/Galaxy XR Chrome에서 hand teleop**
 
-1. 서버 부팅 메시지의 정확한 URL로 접속 (vuer.ai 도메인 직접 접속 금지 — Step T4 트러블슈팅 표 참고)
-2. cert 경고 거부되면 `--http` 동등 우회 필요. 업스트림 teleop_hand_and_arm.py에 `--http` 옵션 없으면 우리 wrapper로 monkey-patch (Week 2의 test_pose_only.py 기법 동일)
-3. Enter VR → 손 들이밀기 → IsaacSim 화면에서 G1 팔과 Dex3-1 손가락이 따라 움직이는지 시각 확인
+1. Chrome → `http://localhost:8012` 접속 (HTTP 평문, cert 경고 없음 — Week 2 결론대로)
+2. **Enter VR** 클릭 → 손을 시야에 들이밀어 hand tracking 활성화
+3. 터미널에서 `r` 키 입력 → 동기화 시작
+4. IsaacSim 화면에서 G1 팔과 Dex3-1 손가락이 따라 움직이는지 시각 확인
+5. 종료: 터미널에서 `q` 키
 
-**Gate 3 통과 조건**: Quest 3 hand tracking → IsaacSim 안의 G1+Dex3-1 자연스러운 teleop 1회 이상 시각 확인 + 30 Hz 이상 안정 동작.
+**Gate 3 통과 조건**: Quest 3 hand tracking → IsaacSim G1+Dex3-1 자연스러운 teleop 1회 이상 시각 확인 + 30 Hz 이상 안정 동작 + recording 1 episode.
 
 ---
 
