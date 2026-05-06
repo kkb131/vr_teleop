@@ -60,12 +60,17 @@ def _ensure_sim_defaults(passthrough: list[str]) -> list[str]:
     """teleop_hand_and_arm.py의 default가 우리 sim 환경에 안 맞으니 보정.
 
     우리 환경: 같은 host의 다른 docker container에서 sim_main.py가 돌고 있어
-    ZMQ image server가 127.0.0.1에 떠있음. 사용자가 --img-server-ip를 명시하지
-    않으면 우리가 127.0.0.1로 덮어쓴다.
+    image server가 localhost에 떠있음. 사용자가 --img-server-ip를 명시하지
+    않으면 우리가 'localhost'로 덮어쓴다.
+
+    'localhost' vs '127.0.0.1': 둘 다 loopback이지만 브라우저 cert cache는
+    host name별로 분리해 검증함. 사용자가 cert를 'https://localhost:60001'로
+    한 번 신뢰하면 webrtc_url='https://localhost:60001/offer'에서 그 cert가
+    재사용됨. '127.0.0.1'을 쓰면 별도 신뢰가 필요해 ws disconnect race 유발.
     """
     if not any(a == "--img-server-ip" or a.startswith("--img-server-ip=") for a in passthrough):
-        passthrough = ["--img-server-ip", "127.0.0.1", *passthrough]
-        print("[run_teleop] inserted --img-server-ip 127.0.0.1 (INTEGRATION §1 권장)", flush=True)
+        passthrough = ["--img-server-ip", "localhost", *passthrough]
+        print("[run_teleop] inserted --img-server-ip localhost (cert 신뢰 host 일치)", flush=True)
     return passthrough
 
 
@@ -76,6 +81,54 @@ def _resolve_teleop_path() -> Path:
         print(f"[run_teleop] ERROR: {teleop} 없음 — bash setup/install.sh 먼저", file=sys.stderr)
         sys.exit(1)
     return teleop
+
+
+def _patch_image_spawn_retry() -> None:
+    """main_image_*_webrtc/zmq spawn func의 session.upsert가 ws disconnect race로
+    'AssertionError: Websocket session is missing'을 던질 때 재시도하도록 monkey-patch.
+
+    원본 spawn func (televuer.py:447-481 근처)은 try/except 없이 한 번만 upsert
+    하므로 첫 ws가 짧게 끊기면 영상 plane이 영영 client에 등록 안 됨 → VR scene
+    안 빈 공간만 보임. 이 wrapper가 AssertionError를 catch해 ws 재연결 시
+    spawn func을 다시 시도.
+    """
+    import asyncio
+    import televuer.televuer as _tv_mod
+    _OrigTV = _tv_mod.TeleVuer
+
+    def _wrap(orig_method):
+        async def _retried(self, session):
+            for attempt in range(20):  # 최대 ~10초
+                try:
+                    return await orig_method(self, session)
+                except AssertionError as e:
+                    if "Websocket session is missing" in str(e):
+                        print(f"[run_teleop] image spawn retry {attempt + 1}/20 (ws disconnect)",
+                              flush=True)
+                        await asyncio.sleep(0.5)
+                        continue
+                    raise
+            print("[run_teleop] WARN: image spawn 20회 모두 실패 — VR scene 안 영상 안 보일 수 있음",
+                  flush=True)
+        _retried.__name__ = getattr(orig_method, "__name__", "_retried")
+        return _retried
+
+    patched = []
+    for name in (
+        "main_image_monocular_webrtc",
+        "main_image_binocular_webrtc",
+        "main_image_monocular_zmq",
+        "main_image_binocular_zmq",
+        "main_image_monocular_webrtc_ego",
+        "main_image_binocular_webrtc_ego",
+        "main_image_monocular_zmq_ego",
+        "main_image_binocular_zmq_ego",
+    ):
+        if hasattr(_OrigTV, name):
+            setattr(_OrigTV, name, _wrap(getattr(_OrigTV, name)))
+            patched.append(name)
+    print(f"[run_teleop] image spawn func wrapped with retry-on-ws-disconnect ({len(patched)} methods)",
+          flush=True)
 
 
 def _sanity_check() -> None:
@@ -132,6 +185,9 @@ def main() -> int:
     # monkey-patch는 teleop 모듈 import 전에
     if wrapper_args.http and not wrapper_args.upstream_help:
         _apply_http_monkey_patch()
+    # 영상 spawn func에 retry-on-ws-disconnect wrapping (default ON, 부작용 거의 없음)
+    if not wrapper_args.upstream_help:
+        _patch_image_spawn_retry()
 
     # DDS env 안내
     if os.environ.get("ROS_DOMAIN_ID") != "1":

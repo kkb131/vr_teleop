@@ -319,7 +319,17 @@ Quest 3/Galaxy XR Chrome에서 **각 endpoint 한 번씩 cert 신뢰**:
 2. `https://localhost:60002` 동일
 3. `https://localhost:60003` 동일
 
+> 💡 **wrapper의 default `--img-server-ip localhost`로 webrtc_url이 `https://localhost:60001/offer`로 만들어지므로 위 3개 endpoint를 신뢰하면 일관됨.** 만약 `--img-server-ip 127.0.0.1`로 override한 경우 `https://127.0.0.1:60001/2/3`도 별도 신뢰 필요 (브라우저 cert cache는 host name별로 분리).
+
 그 다음 `http://localhost:8012` Vuer 페이지로 다시 접속 → **Enter VR** → immersive 모드에서 영상이 VR scene에 표시.
+
+#### T5 트러블슈팅
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| Enter VR 후 빈 3D 공간만, 영상 plane 안 보임 | (1) webrtc_url host와 cert 신뢰 host mismatch (2) ws disconnect race | (1) wrapper default `--img-server-ip localhost` 사용 (2) 양 host 모두 cert 신뢰 (3) wrapper의 `_patch_image_spawn_retry`가 자동으로 ws 재연결 시 재시도 (`[run_teleop] image spawn retry N/20` 로그) |
+| `AssertionError: Websocket session is missing` traceback 반복 | spawn func이 죽은 ws id에 session.upsert 시도 | wrapper에 retry monkey-patch가 default ON. 20회 retry 후에도 실패하면 `WARN: image spawn 20회 모두 실패` 메시지 — 그땐 R2(HTTP 모드 영구) 검토 |
+| webrtc_codec=h264 거부 (브라우저 호환성) | Wolvic 등 일부 브라우저 | sim host의 `cam_config_server.yaml`에서 `webrtc_codec`을 `vp8`로 변경 후 sim 재시작 |
 
 ### T6 — controller 모드 (선택)
 
