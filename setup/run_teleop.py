@@ -78,8 +78,46 @@ def _resolve_teleop_path() -> Path:
     return teleop
 
 
+def _sanity_check() -> None:
+    """conda env tv 활성화 + 핵심 import 사전 확인 — fail-fast 안내.
+
+    teleop_hand_and_arm.py는 깊은 import chain (pinocchio.casadi, dex_retargeting,
+    matplotlib 등)을 거치며, 어디 한 곳이 막히면 traceback이 200줄로 쏟아져
+    원인 파악이 어려움. wrapper 시작 시점에 핵심 3개를 미리 시도해 즉시
+    명확한 에러로 abort.
+    """
+    env = os.environ.get("CONDA_DEFAULT_ENV", "")
+    if env != "tv":
+        print(f"[run_teleop] ERROR: conda env 'tv' not active (current: '{env or '(none)'}')")
+        print("            ROS Humble system pinocchio엔 casadi backend가 없어 teleop_hand_and_arm.py가")
+        print("            'from pinocchio import casadi' 단계에서 즉시 ImportError로 실패함.")
+        print("            아래 순서로 재시도:")
+        print("              conda activate tv")
+        print("              source setup/dds_env.sh")
+        print("              python setup/run_teleop.py --ee dex3 --sim")
+        sys.exit(2)
+    try:
+        import pinocchio.casadi  # noqa: F401
+    except ImportError as e:
+        print(f"[run_teleop] ERROR: pinocchio.casadi import 실패 — {e}")
+        print("            가능 원인:")
+        print("              1) ROS PYTHONPATH가 conda site-packages를 가림 (unset PYTHONPATH 후 재시도)")
+        print("              2) conda env tv에 pinocchio 미설치 (conda env create -f setup/environment.yml)")
+        sys.exit(3)
+    try:
+        import dex_retargeting  # noqa: F401
+    except ImportError:
+        print("[run_teleop] ERROR: dex_retargeting 미설치 (G1+Dex3-1 hand control 필수)")
+        print("            INSTALL_DEX_RETARGETING=1 bash setup/install.sh")
+        sys.exit(4)
+
+
 def main() -> int:
     wrapper_args, passthrough = _parse_wrapper_args()
+
+    # --upstream-help는 sanity check 없이도 동작해야 함
+    if not wrapper_args.upstream_help:
+        _sanity_check()
 
     teleop_path = _resolve_teleop_path()
 

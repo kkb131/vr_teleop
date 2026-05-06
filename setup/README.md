@@ -253,6 +253,8 @@ python3 setup/test_dds_sim.py
 
 **T3 — xr_teleoperate teleop 시작 (우리 wrapper 사용)**
 
+> ⚠️ **conda env tv를 먼저 활성화해야 함.** ROS Humble system Python엔 `pinocchio.casadi` backend가 없어 teleop_hand_and_arm.py 가 import 단계에서 즉시 실패. wrapper의 `_sanity_check()`가 `CONDA_DEFAULT_ENV != 'tv'` 또는 `import pinocchio.casadi` 실패 시 fail-fast로 안내 후 abort.
+
 ```bash
 # conda env tv 활성화 + DDS env (먼저 source dds_env.sh로)
 conda activate tv
@@ -290,6 +292,44 @@ INFO  [SimStateSubscriber] Started subscribing to rt/sim_state
 5. 종료: 터미널에서 `q` 키
 
 **Gate 3 통과 조건**: Quest 3 hand tracking → IsaacSim G1+Dex3-1 자연스러운 teleop 1회 이상 시각 확인 + 30 Hz 이상 안정 동작 + recording 1 episode.
+
+---
+
+### T5 — VR 영상 streaming (immersive 모드)
+
+teleop_hand_and_arm.py가 `display_mode='immersive'` (default)로 부팅하고 sim의 `cam_config_client.yaml`에서 `enable_webrtc: true`이면 vuer가 head/left/right 카메라 영상을 VR scene에 그려야 함. 그러나 **WebRTC server cert가 self-signed라 Quest 3/Galaxy XR Chrome이 한 번도 신뢰한 적 없으면 영상 채널이 막힘**.
+
+영상 포트 (sim의 cam_config_client.yaml 기준):
+- `60001` head_camera (binocular=false)
+- `60002` left_wrist_camera
+- `60003` right_wrist_camera
+- (`60000`은 카메라 config endpoint — HTTP/JSON, **영상 데이터 아님**)
+
+**해결 절차**:
+```bash
+# PC: WebRTC 포트 3개 추가 forwarding
+adb reverse tcp:60001 tcp:60001
+adb reverse tcp:60002 tcp:60002
+adb reverse tcp:60003 tcp:60003
+adb reverse --list   # 4개 (8012 + 60001~60003) 모두 표시 확인
+```
+
+Quest 3/Galaxy XR Chrome에서 **각 endpoint 한 번씩 cert 신뢰**:
+1. `https://localhost:60001` 접속 → "고급 → 안전하지 않은 사이트로 이동" (검은 화면이거나 WebRTC offer page여도 OK — cert 신뢰만 되면 됨)
+2. `https://localhost:60002` 동일
+3. `https://localhost:60003` 동일
+
+그 다음 `http://localhost:8012` Vuer 페이지로 다시 접속 → **Enter VR** → immersive 모드에서 영상이 VR scene에 표시.
+
+### T6 — controller 모드 (선택)
+
+Quest 3/Galaxy XR 컨트롤러로 조종하려면 wrapper에 `--input-mode controller` 추가:
+
+```bash
+python setup/run_teleop.py --ee dex3 --sim --input-mode controller
+```
+
+(default는 `hand`. hand 모드에서 컨트롤러를 들고 있어도 동작 안 하는 게 정상 — vuer가 `Hands` 컴포넌트만 stream으로 등록하기 때문.)
 
 ---
 
