@@ -79,6 +79,11 @@ def _force_plain_http() -> None:
     televuer __init__(line 71-89)이 항상 cert_file/key_file을 non-None 경로로 채워서
     Vuer(cert=...)를 부르는데, vuer.base.py:119는 `if not self.cert:` 분기에서 plain HTTP
     TCPSite로 떨어진다. 따라서 Vuer 호출 시점에서 cert/key를 None으로 강제 치환하면 OK.
+
+    추가로 queue_len=3 (televuer.py:91 default) → 1024로 키움. Galaxy XR Chrome immersive
+    진입 시 ws reconnect 사이클이 잦은 환경에서 server→client uplink_queue가 빨리 비워져
+    race가 가중되는 side effect 완화 목적. queue_len 자체가 disconnect를 트리거하진 않지만
+    (deque maxlen은 silent drop), 데이터로 무관함을 확정하는 용도로도 가치 있음.
     """
     _OrigVuer = _tv_mod.Vuer
 
@@ -86,10 +91,11 @@ def _force_plain_http() -> None:
         def __init__(self, *args, **kwargs):
             kwargs["cert"] = None
             kwargs["key"] = None
+            kwargs["queue_len"] = 1024
             super().__init__(*args, **kwargs)
 
     _tv_mod.Vuer = _PlainHTTPVuer
-    print("[init] HTTP mode (plain) — cert/key forced to None")
+    print("[init] HTTP mode (plain) — cert/key forced to None, queue_len=1024")
 
 
 # ── debug counters (cross-process shared) ─────────────────────────────────
