@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WebXR check (Galaxy XR diagnostic)</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: #0a0a0a; color: #e8e8e8;
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-size: 20px; line-height: 1.45;
+  }
+  main { max-width: 900px; padding: 16px 20px 64px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 4px 0 12px; color: #ffd866; }
+  h2 { font-size: 22px; margin: 24px 0 8px; color: #a9dc76; border-bottom: 1px solid #333; padding-bottom: 4px; }
+  pre {
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 6px;
+    padding: 12px 14px; white-space: pre-wrap; word-break: break-all;
+    font-size: 18px; line-height: 1.4;
+    max-height: 60vh; overflow-y: auto;
+  }
+  button {
+    display: block; width: 100%;
+    margin: 8px 0; padding: 14px 16px;
+    background: #1f6feb; color: white; border: 0; border-radius: 6px;
+    font-size: 20px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { background: #333; color: #777; cursor: not-allowed; }
+  button.danger { background: #b62324; }
+  button.alt { background: #6a4cff; }
+  .ok    { color: #a9dc76; font-weight: 700; }
+  .fail  { color: #ff6188; font-weight: 700; }
+  .warn  { color: #ffd866; }
+  .muted { color: #888; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WebXR check — Galaxy XR diagnostic</h1>
+  <p class="muted">vuer 무관, 한 페이지로 navigator.xr / immersive-vr / immersive-ar / hand-tracking 직접 검증. 결과는 화면에 그대로 출력 (DevTools 불필요).</p>
+
+  <h2>1. Auto diagnostic (page-load)</h2>
+  <pre id="auto">running...</pre>
+
+  <h2>2. Enter session</h2>
+  <button id="btn-vr"     disabled>Enter VR (optional hand-tracking)</button>
+  <button id="btn-ar"     class="alt"    disabled>Enter AR (optional hand-tracking)</button>
+  <button id="btn-vr-req" class="alt"    disabled>Enter VR (REQUIRED hand-tracking) — strict</button>
+  <button id="btn-end"    class="danger" disabled>End XR session</button>
+
+  <h2>3. Live session log</h2>
+  <pre id="live">(no active session)</pre>
+</main>
+
+<script>
+const $auto = document.getElementById('auto');
+const $live = document.getElementById('live');
+const $btnVR    = document.getElementById('btn-vr');
+const $btnAR    = document.getElementById('btn-ar');
+const $btnVReq  = document.getElementById('btn-vr-req');
+const $btnEnd   = document.getElementById('btn-end');
+
+// ── helpers ───────────────────────────────────────────────────────────
+function autoLog(line, cls) {
+  const span = cls ? `<span class="${cls}">${line}</span>` : line;
+  $auto.innerHTML = ($auto.innerHTML === 'running...' ? '' : $auto.innerHTML) + span + '\n';
+}
+let liveBuf = [];
+function liveLog(line) {
+  const ts = new Date().toISOString().substr(11, 12);
+  liveBuf.push(`[${ts}] ${line}`);
+  if (liveBuf.length > 200) liveBuf.shift();
+  $live.textContent = liveBuf.join('\n');
+  $live.scrollTop = $live.scrollHeight;
+}
+
+// ── auto diagnostic ───────────────────────────────────────────────────
+async function runAuto() {
+  $auto.innerHTML = '';
+  autoLog('User-Agent: ' + navigator.userAgent);
+  autoLog('Origin    : ' + location.origin);
+  autoLog('Secure ctx: ' + (window.isSecureContext ? 'yes' : 'NO'),
+                            window.isSecureContext ? 'ok' : 'warn');
+  const xrType = typeof navigator.xr;
+  autoLog('typeof navigator.xr: ' + xrType, xrType === 'object' ? 'ok' : 'fail');
+  if (xrType !== 'object') {
+    autoLog('→ navigator.xr undefined: WebXR API not exposed.', 'fail');
+    autoLog('  Check chrome://flags/#webxr-incubations and that this URL is a secure context (https or localhost).', 'warn');
+    return;
+  }
+  let vrOK = false, arOK = false;
+  try {
+    vrOK = await navigator.xr.isSessionSupported('immersive-vr');
+    autoLog('isSessionSupported("immersive-vr"): ' + vrOK, vrOK ? 'ok' : 'fail');
+  } catch (e) {
+    autoLog('isSessionSupported("immersive-vr") threw: ' + e.name + ' — ' + e.message, 'fail');
+  }
+  try {
+    arOK = await navigator.xr.isSessionSupported('immersive-ar');
+    autoLog('isSessionSupported("immersive-ar"): ' + arOK, arOK ? 'ok' : 'fail');
+  } catch (e) {
+    autoLog('isSessionSupported("immersive-ar") threw: ' + e.name + ' — ' + e.message, 'fail');
+  }
+  $btnVR.disabled    = !vrOK;
+  $btnAR.disabled    = !arOK;
+  $btnVReq.disabled  = !vrOK;
+
+  autoLog('');
+  if (!vrOK && !arOK) {
+    autoLog('→ Both VR and AR unsupported. Likely Chrome flags / policy issue.', 'fail');
+  } else if (vrOK && arOK) {
+    autoLog('→ Both supported. Try the buttons below to actually enter a session.', 'ok');
+  } else if (vrOK) {
+    autoLog('→ VR only. vuer (default vr) should work; if not → vuer frontend issue (hypothesis #1).', 'warn');
+  } else {
+    autoLog('→ AR only. vuer 0.0.60 default = vr → mismatch (hypothesis #2). Use AR button below to confirm.', 'warn');
+  }
+}
+
+// ── session lifecycle ─────────────────────────────────────────────────
+let xrSession = null, xrRefSpace = null, gl = null, xrCanvas = null;
+let frameCount = 0, lastFrameLog = 0, handCountLastSeen = -1;
+
+async function startSession(mode, requireHand) {
+  liveBuf = [];
+  liveLog(`requesting ${mode}, requireHand=${requireHand}`);
+  try {
+    xrCanvas = document.createElement('canvas');
+    gl = xrCanvas.getContext('webgl2', { xrCompatible: true });
+    if (!gl) {
+      liveLog('FAIL: webgl2 context with xrCompatible=true not available');
+      return;
+    }
+    await gl.makeXRCompatible();
+
+    const opts = requireHand
+      ? { requiredFeatures: ['hand-tracking', 'local-floor'] }
+      : { optionalFeatures: ['hand-tracking', 'local-floor'] };
+    xrSession = await navigator.xr.requestSession(mode, opts);
+    liveLog('session started: ' + mode);
+
+    xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+    try {
+      xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+      liveLog('refSpace: local-floor');
+    } catch (e) {
+      liveLog('local-floor failed (' + e.name + '), falling back to local');
+      xrRefSpace = await xrSession.requestReferenceSpace('local');
+    }
+
+    xrSession.addEventListener('inputsourceschange', () => {
+      let hands = 0, ctrls = 0;
+      for (const s of xrSession.inputSources) {
+        if (s.hand) hands++; else ctrls++;
+      }
+      liveLog(`inputsourceschange: hands=${hands} controllers=${ctrls} total=${xrSession.inputSources.length}`);
+    });
+    xrSession.addEventListener('end', () => {
+      liveLog('session ended (frames=' + frameCount + ')');
+      xrSession = null; xrRefSpace = null; gl = null;
+      $btnVR.disabled = false; $btnAR.disabled = false; $btnVReq.disabled = false;
+      $btnEnd.disabled = true;
+      runAuto(); // refresh button gating against current support
+    });
+
+    $btnVR.disabled = true; $btnAR.disabled = true; $btnVReq.disabled = true;
+    $btnEnd.disabled = false;
+
+    frameCount = 0; lastFrameLog = performance.now(); handCountLastSeen = -1;
+    xrSession.requestAnimationFrame(onFrame);
+  } catch (e) {
+    liveLog('FAIL: ' + e.name + ' — ' + e.message);
+  }
+}
+
+function onFrame(time, frame) {
+  if (!xrSession) return;
+  xrSession.requestAnimationFrame(onFrame);
+  frameCount++;
+
+  const layer = xrSession.renderState.baseLayer;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+  const t = (time / 1000) % 1;
+  gl.clearColor(0.1 + 0.2 * t, 0.2, 0.4, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // 1Hz heartbeat into live log + first-time hand event
+  const now = performance.now();
+  let curHandCount = 0;
+  let firstWristStr = null;
+  for (const s of frame.session.inputSources) {
+    if (s.hand) {
+      curHandCount++;
+      if (!firstWristStr) {
+        const w = s.hand.get('wrist');
+        if (w) {
+          const jp = frame.getJointPose(w, xrRefSpace);
+          if (jp) {
+            const p = jp.transform.position;
+            firstWristStr = `wrist=[${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}] handed=${s.handedness}`;
+          }
+        }
+      }
+    }
+  }
+  if (curHandCount !== handCountLastSeen) {
+    handCountLastSeen = curHandCount;
+    liveLog('hand count → ' + curHandCount);
+  }
+  if (now - lastFrameLog > 1000) {
+    lastFrameLog = now;
+    const fps = frameCount / ((now - (lastFrameLog - 1000)) / 1000); // approx
+    liveLog(`frame=${frameCount} hands=${curHandCount}` + (firstWristStr ? '  ' + firstWristStr : ''));
+  }
+}
+
+$btnVR.onclick    = () => startSession('immersive-vr', false);
+$btnAR.onclick    = () => startSession('immersive-ar', false);
+$btnVReq.onclick  = () => startSession('immersive-vr', true);
+$btnEnd.onclick   = () => xrSession && xrSession.end();
+
+runAuto();
+</script>
+</body>
+</html>
