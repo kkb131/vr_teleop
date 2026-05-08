@@ -165,6 +165,9 @@ async function startSession(mode, requireHand) {
       }
       liveLog(`inputsourceschange: hands=${hands} controllers=${ctrls} total=${xrSession.inputSources.length}`);
     });
+    xrSession.addEventListener('visibilitychange', () => {
+      liveLog(`xr visibilitychange → ${xrSession.visibilityState}`);
+    });
     xrSession.addEventListener('end', () => {
       liveLog('session ended (frames=' + frameCount + ')');
       xrSession = null; xrRefSpace = null; gl = null;
@@ -219,7 +222,7 @@ function onFrame(time, frame) {
   }
   if (now - lastFrameLog > 1000) {
     lastFrameLog = now;
-    liveLog(`frame=${frameCount} hands=${curHandCount} vis=${document.visibilityState} hidden=${document.hidden}` + (firstWristStr ? '  ' + firstWristStr : ''));
+    liveLog(`frame=${frameCount} hands=${curHandCount} doc.vis=${document.visibilityState} xr.vis=${xrSession.visibilityState}` + (firstWristStr ? '  ' + firstWristStr : ''));
   }
 }
 
