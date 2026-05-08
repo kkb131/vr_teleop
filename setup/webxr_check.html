@@ -127,6 +127,15 @@ document.addEventListener('visibilitychange', () => {
   liveLog(`visibilitychange → state=${document.visibilityState} hidden=${document.hidden}`);
 });
 
+// ── setInterval/RAF throttle counter (vuer useInterval freeze 가설 검증) ──
+// vuer Hands 컴포넌트는 useInterval(callback, 1e3/30)로 publish — 즉 setInterval(33ms).
+// Galaxy XR Chrome immersive session 안에서 setInterval이 throttle되는지 정량 확인.
+// 정상이면 매 1초당 ~30번 fire, throttle되면 1번 이하.
+let setIntCount = 0, rafCount = 0;
+setInterval(() => { setIntCount++; }, 33);
+function rafLoop() { rafCount++; requestAnimationFrame(rafLoop); }
+requestAnimationFrame(rafLoop);
+
 // ── session lifecycle ─────────────────────────────────────────────────
 let xrSession = null, xrRefSpace = null, gl = null, xrCanvas = null;
 let frameCount = 0, lastFrameLog = 0, handCountLastSeen = -1;
@@ -222,7 +231,9 @@ function onFrame(time, frame) {
   }
   if (now - lastFrameLog > 1000) {
     lastFrameLog = now;
-    liveLog(`frame=${frameCount} hands=${curHandCount} doc.vis=${document.visibilityState} xr.vis=${xrSession.visibilityState}` + (firstWristStr ? '  ' + firstWristStr : ''));
+    const sIntDelta = setIntCount; setIntCount = 0;
+    const rafDelta = rafCount; rafCount = 0;
+    liveLog(`xrFrame=${frameCount} setInt(33ms)=${sIntDelta}/s raf=${rafDelta}/s hands=${curHandCount} doc.vis=${document.visibilityState} xr.vis=${xrSession.visibilityState}` + (firstWristStr ? '  ' + firstWristStr : ''));
   }
 }
 
