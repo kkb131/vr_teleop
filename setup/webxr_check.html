@@ -82,6 +82,10 @@ async function runAuto() {
   autoLog('Origin    : ' + location.origin);
   autoLog('Secure ctx: ' + (window.isSecureContext ? 'yes' : 'NO'),
                             window.isSecureContext ? 'ok' : 'warn');
+  autoLog('document.visibilityState: ' + document.visibilityState,
+                            document.visibilityState === 'visible' ? 'ok' : 'warn');
+  autoLog('document.hidden         : ' + document.hidden,
+                            document.hidden ? 'fail' : 'ok');
   const xrType = typeof navigator.xr;
   autoLog('typeof navigator.xr: ' + xrType, xrType === 'object' ? 'ok' : 'fail');
   if (xrType !== 'object') {
@@ -117,6 +121,11 @@ async function runAuto() {
     autoLog('→ AR only. vuer 0.0.60 default = vr → mismatch (hypothesis #2). Use AR button below to confirm.', 'warn');
   }
 }
+
+// ── visibility monitor (vuer setInterval+document.hidden 가드 가설 검증) ───
+document.addEventListener('visibilitychange', () => {
+  liveLog(`visibilitychange → state=${document.visibilityState} hidden=${document.hidden}`);
+});
 
 // ── session lifecycle ─────────────────────────────────────────────────
 let xrSession = null, xrRefSpace = null, gl = null, xrCanvas = null;
@@ -210,8 +219,7 @@ function onFrame(time, frame) {
   }
   if (now - lastFrameLog > 1000) {
     lastFrameLog = now;
-    const fps = frameCount / ((now - (lastFrameLog - 1000)) / 1000); // approx
-    liveLog(`frame=${frameCount} hands=${curHandCount}` + (firstWristStr ? '  ' + firstWristStr : ''));
+    liveLog(`frame=${frameCount} hands=${curHandCount} vis=${document.visibilityState} hidden=${document.hidden}` + (firstWristStr ? '  ' + firstWristStr : ''));
   }
 }
 
