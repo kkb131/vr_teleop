@@ -38,19 +38,23 @@
 <body>
 <main>
   <h1>WebXR pose stream → Python ws</h1>
-  <p class="muted">vuer client React 우회. XR-RAF 기반 onFrame loop에서 매 frame head/hand pose JSON으로 ws://&lt;host&gt;/pose에 송신. PC측은 setup/test_pose_only_ws.py.</p>
+  <p class="muted">vuer client React 우회. XR-RAF onFrame 에서 매 frame head/hand pose JSON 송신 (ws) + WebRTC peer로 head_camera 영상을 head-locked plane에 render. immersive-ar 진입 시 background는 pass-through (alpha=0 clear). PC측은 scripts/run_teleop_ws.py 또는 scripts/test_pose_only_ws.py.</p>
+  <p class="muted">URL 쿼리: <code>?webrtc_port=60001</code> (head_camera 기본), <code>?webrtc_off=1</code> 으로 영상 비활성. cert 신뢰: <code>https://localhost:&lt;port&gt;</code> 한 번 방문해 self-signed cert 수락 필요.</p>
 
   <h2>1. Auto diagnostic + WS status</h2>
   <pre id="auto">running...</pre>
 
   <h2>2. Enter session</h2>
   <button id="btn-vr"  disabled>Enter VR (optional hand-tracking)</button>
-  <button id="btn-ar"  class="alt"    disabled>Enter AR (optional hand-tracking)</button>
+  <button id="btn-ar"  class="alt"    disabled>Enter AR (optional hand-tracking) — pass-through</button>
   <button id="btn-end" class="danger" disabled>End XR session</button>
 
   <h2>3. Live session log</h2>
   <pre id="live">(no active session)</pre>
 </main>
+
+<!-- off-screen video element — WebRTC stream sink. WebGL texture source로 사용 -->
+<video id="webrtc-video" autoplay playsinline muted style="display:none;"></video>
 
 <script>
 const $auto = document.getElementById('auto');
@@ -133,6 +137,161 @@ async function runAuto() {
   $btnAR.disabled = !arOK;
 }
 
+// ── WebRTC video stream (옵션 B1: head_camera 영상을 head-locked plane으로) ──
+// URL 쿼리로 동작 조절: ?webrtc_port=60001, ?webrtc_off=1
+const URL_PARAMS = new URLSearchParams(location.search);
+const WEBRTC_PORT = parseInt(URL_PARAMS.get('webrtc_port') || '60001', 10);
+const WEBRTC_OFF  = URL_PARAMS.get('webrtc_off') === '1';
+const WEBRTC_HOST = location.hostname || 'localhost';
+
+const videoEl = document.getElementById('webrtc-video');
+let pc = null;
+let pcTrackBound = false;
+
+async function _connectWebRTC() {
+  if (WEBRTC_OFF) { liveLog('webrtc: disabled (webrtc_off=1)'); return; }
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  pc = new RTCPeerConnection({ iceServers: [] });
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.ontrack = (event) => {
+    pcTrackBound = true;
+    liveLog(`webrtc ontrack: kind=${event.track.kind}`);
+    videoEl.srcObject = event.streams[0];
+    videoEl.play().catch(e => liveLog('video.play() error: ' + e.message));
+  };
+  pc.oniceconnectionstatechange = () => liveLog(`webrtc ice: ${pc.iceConnectionState}`);
+  pc.onconnectionstatechange    = () => liveLog(`webrtc pc:  ${pc.connectionState}`);
+
+  const url = `https://${WEBRTC_HOST}:${WEBRTC_PORT}/offer`;
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    liveLog(`webrtc POST ${url}`);
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+    });
+    if (!resp.ok) { liveLog(`webrtc /offer status=${resp.status}`); return; }
+    const answer = await resp.json();
+    await pc.setRemoteDescription(answer);
+    liveLog('webrtc setRemoteDescription OK');
+  } catch (e) {
+    liveLog(`webrtc FAIL: ${e.name} — ${e.message}`);
+    liveLog(`  → ${url} cert을 헤드셋 Chrome에서 한 번 신뢰했는지 확인`);
+  }
+}
+
+function _disconnectWebRTC() {
+  if (pc) { try { pc.close(); } catch(e) {} pc = null; }
+  if (videoEl) videoEl.srcObject = null;
+  pcTrackBound = false;
+}
+
+// ── WebGL render resources (video → head-locked plane) ─────────────────
+let shaderProgram = null;
+let attrPos = -1, attrUv = -1, uniformProj = null, uniformTex = null;
+let quadBuffer = null;
+let videoTexture = null;
+let videoTexW = 0, videoTexH = 0;
+
+function _initRenderResources() {
+  if (shaderProgram) return;
+
+  const vsSrc = `#version 300 es
+in vec3 a_pos;
+in vec2 a_uv;
+uniform mat4 u_proj;
+out vec2 v_uv;
+void main() {
+  gl_Position = u_proj * vec4(a_pos, 1.0);
+  v_uv = a_uv;
+}`;
+  const fsSrc = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 outColor;
+void main() {
+  outColor = texture(u_tex, v_uv);
+}`;
+
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      liveLog('shader compile error: ' + gl.getShaderInfoLog(sh));
+    }
+    return sh;
+  };
+  const vs = compile(gl.VERTEX_SHADER, vsSrc);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+  shaderProgram = gl.createProgram();
+  gl.attachShader(shaderProgram, vs);
+  gl.attachShader(shaderProgram, fs);
+  gl.linkProgram(shaderProgram);
+  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+    liveLog('program link error: ' + gl.getProgramInfoLog(shaderProgram));
+  }
+  attrPos     = gl.getAttribLocation(shaderProgram, 'a_pos');
+  attrUv      = gl.getAttribLocation(shaderProgram, 'a_uv');
+  uniformProj = gl.getUniformLocation(shaderProgram, 'u_proj');
+  uniformTex  = gl.getUniformLocation(shaderProgram, 'u_tex');
+
+  // head-locked plane: viewer 앞 1m 거리, 16:9, 폭 1.6m × 높이 0.9m
+  // (camera space: view matrix 곱 안 함 → 양 눈에서 같은 위치라 head-attached)
+  const D = -1.0;
+  const W = 0.8, H = 0.45;
+  const verts = new Float32Array([
+    // x, y, z,     u, v
+    -W, -H, D,     0.0, 1.0,
+     W, -H, D,     1.0, 1.0,
+    -W,  H, D,     0.0, 0.0,
+     W,  H, D,     1.0, 0.0,
+  ]);
+  quadBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+  videoTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  liveLog('webgl render resources initialized');
+}
+
+function _drawVideoPlane(view) {
+  if (!videoEl || videoEl.readyState < 2) return;  // HAVE_CURRENT_DATA
+  _initRenderResources();
+
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+  if (videoEl.videoWidth !== videoTexW || videoEl.videoHeight !== videoTexH) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoEl);
+    videoTexW = videoEl.videoWidth;
+    videoTexH = videoEl.videoHeight;
+  } else {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, videoEl);
+  }
+
+  gl.useProgram(shaderProgram);
+  gl.uniformMatrix4fv(uniformProj, false, view.projectionMatrix);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+  gl.uniform1i(uniformTex, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+  gl.enableVertexAttribArray(attrPos);
+  gl.vertexAttribPointer(attrPos, 3, gl.FLOAT, false, 5 * 4, 0);
+  gl.enableVertexAttribArray(attrUv);
+  gl.vertexAttribPointer(attrUv, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
+
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
 // ── session lifecycle ─────────────────────────────────────────────────
 let xrSession = null, xrRefSpace = null, gl = null, xrCanvas = null;
 let frameCount = 0, lastFrameLog = 0;
@@ -142,7 +301,8 @@ async function startSession(mode) {
   liveLog(`requesting ${mode}`);
   try {
     xrCanvas = document.createElement('canvas');
-    gl = xrCanvas.getContext('webgl2', { xrCompatible: true });
+    // alpha:true — pass-through 위해 clearColor alpha=0 일 때 background가 카메라 영상으로
+    gl = xrCanvas.getContext('webgl2', { xrCompatible: true, alpha: true, premultipliedAlpha: false });
     if (!gl) { liveLog('FAIL: webgl2 xrCompatible context unavailable'); return; }
     await gl.makeXRCompatible();
 
@@ -169,6 +329,10 @@ async function startSession(mode) {
     });
     xrSession.addEventListener('end', () => {
       liveLog(`session ended (frames=${frameCount} ws.sent=${wsSent} ws.failures=${wsFailures})`);
+      _disconnectWebRTC();
+      // WebGL resources 는 새 GL context 마다 재생성 필요 → reset
+      shaderProgram = null; quadBuffer = null; videoTexture = null;
+      videoTexW = 0; videoTexH = 0;
       xrSession = null; xrRefSpace = null; gl = null;
       $btnVR.disabled = false; $btnAR.disabled = false;
       $btnEnd.disabled = true;
@@ -178,6 +342,10 @@ async function startSession(mode) {
     $btnVR.disabled = true; $btnAR.disabled = true; $btnEnd.disabled = false;
 
     frameCount = 0; lastFrameLog = performance.now(); wsSent = 0; wsFailures = 0;
+
+    // WebRTC peer 자동 시도 (실패해도 pose stream 은 영향 없음)
+    _connectWebRTC().catch(e => liveLog('webrtc connect threw: ' + e.message));
+
     xrSession.requestAnimationFrame(onFrame);
   } catch (e) {
     liveLog('FAIL: ' + e.name + ' — ' + e.message);
@@ -189,18 +357,26 @@ function onFrame(time, frame) {
   xrSession.requestAnimationFrame(onFrame);
   frameCount++;
 
-  // 빈 layer 클리어 (immersive 안에서 뭔가 그려야 정지 안 됨)
+  // pass-through 위해 alpha=0 으로 clear → immersive-ar 시 background 카메라 영상 보임
+  // (immersive-vr 은 그냥 검은 배경. 디버깅 시 monitor 관찰 위해 AR 권장)
   const layer = xrSession.renderState.baseLayer;
   gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-  gl.clearColor(0.05, 0.1, 0.2, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  // ── head pose ────────────────────────────────────────────────────────
+  // ── head pose + video plane render per view ────────────────────────
   const viewerPose = frame.getViewerPose(xrRefSpace);
   if (viewerPose) {
-    // transform.matrix: Float32Array(16), column-major SE(3)
     const m = viewerPose.transform.matrix;
     wsSend({ type: 'head', ts: time, matrix: Array.from(m) });
+
+    // head-locked video plane: 각 view 의 projection matrix 만 사용 (view matrix
+    // 곱 안 함 → camera space 에 고정, 양 눈에서 같은 위치 → head-attached)
+    for (const view of viewerPose.views) {
+      const vp = layer.getViewport(view);
+      gl.viewport(vp.x, vp.y, vp.width, vp.height);
+      _drawVideoPlane(view);
+    }
   }
 
   // ── hand poses (positions + orientations) ──────────────────────────
