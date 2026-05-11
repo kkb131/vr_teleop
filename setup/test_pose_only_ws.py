@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
-"""vuer 우회 ws pose server — Galaxy XR Chrome에서 vuer client publish 멈춤 우회.
+"""vuer 우회 ws bridge — pose-only 검증.
 
-배경: Galaxy XR Chrome immersive 진입 시 vuer 0.0.60 client가 hand/cam event를
-30초간 7회/2회만 publish하고 멈춤. webxr_check.html(자체 XR-RAF 기반)은 정상 동작
-확인됨. 따라서 vuer client React 자체를 우회하고 자체 ws server에 직접 송신하는
-구조를 도입.
+BridgePoseStore 라이브러리(setup/bridge_pose_store.py)를 thin script 로 래핑.
+BridgePoseStore 가 자체 aiohttp ws server (port 8013) + HTTP static 서빙 +
+shared array 운영을 모두 담당하므로 이 스크립트는 단지:
+- BridgePoseStore 인스턴스 생성 (TeleVuer 와 같은 인자)
+- smoke (1Hz 로그) 또는 measure (N초 자동 측정 + 보고서 append) 모드 실행
 
-구성:
-- HTTP server (port 8013): webxr_to_pose.html 정적 서빙
-- WebSocket server (port 8013/pose): client로부터 JSON pose 메시지 수신
-- 매 메시지마다 PoseStore에 update
-- main thread에서 1Hz smoke 로그 또는 N초 measure (test_pose_only.py와 같은 형식)
-
-JSON 프로토콜:
-  {"type": "head", "ts": <ms>, "matrix": [16 floats column-major]}
-  {"type": "hand", "ts": <ms>, "handedness": "left"|"right",
-   "wrist": [16 floats], "positions": [25 × [x,y,z]]}
+본 스크립트는 standalone pose 검증용. 실제 teleop 통합은 setup/run_teleop_ws.py
+가 BridgePoseStore 를 monkey-patch 로 inject (televuer.TeleVuer 자리에).
 
 Usage:
   # PC측
   adb reverse tcp:8013 tcp:8013
   python3 setup/test_pose_only_ws.py
-  # Galaxy XR Chrome → http://localhost:8013/  → Enter VR/AR
+  # Galaxy XR Chrome → http://localhost:8013/
 
   # 측정 모드
   python3 setup/test_pose_only_ws.py --measure 30 --report docs/galaxy_xr.md
@@ -30,128 +23,27 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import datetime as dt
 import json
+import os
 import sys
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
-try:
-    from aiohttp import web, WSMsgType
-except ImportError:
-    print("[ERR] aiohttp 미설치. conda activate tv 또는 pip install aiohttp")
-    sys.exit(1)
-
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="vuer 우회 ws pose server")
-    p.add_argument("--port", type=int, default=8013)
+    p = argparse.ArgumentParser(description="vuer 우회 ws bridge pose 검증")
+    p.add_argument("--port", type=int, default=8013,
+                   help="ws server port (XR_BRIDGE_PORT env 와 동등)")
     p.add_argument("--measure", type=float, default=None, metavar="SEC",
                    help="N초간 자동 측정 후 종료")
     p.add_argument("--report", type=str, default=None,
-                   help="측정 결과를 markdown으로 append할 파일 경로")
+                   help="측정 결과를 markdown 으로 append 할 파일 경로")
     return p.parse_args()
 
 
-# ── shared pose store ──────────────────────────────────────────────────
-class PoseStore:
-    """test_pose_only.py의 TeleVuer property들과 같은 형식의 데이터."""
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self.head_pose = np.zeros(16, dtype=np.float64)
-        self.left_arm_pose = np.zeros(16, dtype=np.float64)
-        self.right_arm_pose = np.zeros(16, dtype=np.float64)
-        self.left_hand_positions = np.zeros(25 * 3, dtype=np.float64)
-        self.right_hand_positions = np.zeros(25 * 3, dtype=np.float64)
-        self.msg_count = 0  # client → server 메시지 누적
-        self.last_msg_time = 0.0
-
-    def update_head(self, matrix: list[float]) -> None:
-        with self._lock:
-            self.head_pose[:] = matrix
-            self.msg_count += 1
-            self.last_msg_time = time.perf_counter()
-
-    def update_hand(self, handedness: str, wrist: list[float],
-                    positions: list[list[float]]) -> None:
-        flat = np.array(positions, dtype=np.float64).reshape(-1)
-        with self._lock:
-            if handedness == "left":
-                self.left_arm_pose[:] = wrist
-                self.left_hand_positions[:] = flat
-            else:
-                self.right_arm_pose[:] = wrist
-                self.right_hand_positions[:] = flat
-            self.msg_count += 1
-            self.last_msg_time = time.perf_counter()
-
-    def snapshot(self) -> dict:
-        with self._lock:
-            return {
-                "head": self.head_pose.copy().reshape(4, 4, order="F"),
-                "lw": self.left_arm_pose.copy().reshape(4, 4, order="F"),
-                "rw": self.right_arm_pose.copy().reshape(4, 4, order="F"),
-                "lh": self.left_hand_positions.copy().reshape(25, 3),
-                "rh": self.right_hand_positions.copy().reshape(25, 3),
-                "msgs": self.msg_count,
-            }
-
-
-STORE = PoseStore()
-
-
-# ── ws / http handlers ────────────────────────────────────────────────
-async def ws_handler(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
-    print(f"[ws] client connected from {request.remote}", flush=True)
-    parse_errors = 0
-    try:
-        async for msg in ws:
-            if msg.type == WSMsgType.TEXT:
-                try:
-                    payload = json.loads(msg.data)
-                    t = payload.get("type")
-                    if t == "head":
-                        STORE.update_head(payload["matrix"])
-                    elif t == "hand":
-                        STORE.update_hand(
-                            payload["handedness"],
-                            payload["wrist"],
-                            payload["positions"],
-                        )
-                except Exception as e:
-                    parse_errors += 1
-                    if parse_errors <= 3:
-                        print(f"[ws] parse error: {e}", flush=True)
-            elif msg.type == WSMsgType.ERROR:
-                print(f"[ws] connection error: {ws.exception()}", flush=True)
-                break
-    finally:
-        print(f"[ws] client disconnected (parse_errors={parse_errors})", flush=True)
-    return ws
-
-
-async def index_handler(_request: web.Request) -> web.FileResponse:
-    p = Path(__file__).parent / "webxr_to_pose.html"
-    if not p.exists():
-        return web.Response(status=404, text=f"missing {p}")
-    return web.FileResponse(p)
-
-
-def make_app() -> web.Application:
-    app = web.Application()
-    app.router.add_get("/", index_handler)
-    app.router.add_get("/pose", ws_handler)
-    return app
-
-
-# ── pose helpers (test_pose_only.py와 동일) ──────────────────────────
 def is_pose_initialized(M: np.ndarray) -> bool:
     return bool(np.isclose(M[3, 3], 1.0))
 
@@ -164,8 +56,7 @@ def has_nan(arr: np.ndarray) -> bool:
     return bool(np.isnan(arr).any())
 
 
-# ── modes ───────────────────────────────────────────────────────────
-def run_smoke() -> None:
+def run_smoke(store) -> None:
     print("\n[smoke] 1Hz log... (Ctrl+C to stop)\n")
     print(f"{'time':>6} | {'msg/s':>6} | head | LW | RW | LH | RH | hand_pos[0]")
     print("-" * 80)
@@ -176,29 +67,34 @@ def run_smoke() -> None:
         while True:
             now = time.perf_counter()
             if now - t_window >= 1.0:
-                snap = STORE.snapshot()
-                cur = snap["msgs"]
+                stats = store.get_stats()
+                cur = stats["msg_count"]
                 rate = (cur - last_msgs) / (now - t_window)
                 last_msgs = cur
-                pos0 = snap["lh"][0] if is_hand_tracked(snap["lh"]) else np.zeros(3)
+                head = store.head_pose
+                lw = store.left_arm_pose
+                rw = store.right_arm_pose
+                lh = store.left_hand_positions
+                rh = store.right_hand_positions
+                pos0 = lh[0] if is_hand_tracked(lh) else np.zeros(3)
                 print(
                     f"{now - t_start:6.1f} | {rate:6.1f} | "
-                    f"{'OK' if is_pose_initialized(snap['head']) else '..'} | "
-                    f"{'OK' if is_pose_initialized(snap['lw']) else '..'} | "
-                    f"{'OK' if is_pose_initialized(snap['rw']) else '..'} | "
-                    f"{'OK' if is_hand_tracked(snap['lh']) else '..'} | "
-                    f"{'OK' if is_hand_tracked(snap['rh']) else '..'} | "
+                    f"{'OK' if is_pose_initialized(head) else '..'} | "
+                    f"{'OK' if is_pose_initialized(lw) else '..'} | "
+                    f"{'OK' if is_pose_initialized(rw) else '..'} | "
+                    f"{'OK' if is_hand_tracked(lh) else '..'} | "
+                    f"{'OK' if is_hand_tracked(rh) else '..'} | "
                     f"[{pos0[0]:+.2f}, {pos0[1]:+.2f}, {pos0[2]:+.2f}]"
                 )
                 t_window = now
             time.sleep(0.05)
     except KeyboardInterrupt:
         elapsed = time.perf_counter() - t_start
-        total = STORE.msg_count
+        total = store.get_stats()["msg_count"]
         print(f"\n[smoke] stopped. avg {total / elapsed:.1f} msg/s over {elapsed:.1f}s")
 
 
-def run_measure(duration: float) -> dict:
+def run_measure(store, duration: float) -> dict:
     print(f"\n[measure] {duration:.0f}초간 자동 측정")
     print("[measure] 가이드: ① 손 자연스럽게 ② 시야 밖→다시 안으로 (recovery) ③ 마지막 5초 정지 (jitter)")
     input("[measure] 준비됐으면 Enter...\n")
@@ -214,15 +110,17 @@ def run_measure(duration: float) -> dict:
     lw_positions: list[np.ndarray] = []
 
     n = 0
-    msg_count_start = STORE.msg_count
+    msg_count_start = store.get_stats()["msg_count"]
 
     while True:
         now = time.perf_counter()
         if now >= t_end:
             break
-        snap = STORE.snapshot()
-        head, lw, rw = snap["head"], snap["lw"], snap["rw"]
-        lh, rh = snap["lh"], snap["rh"]
+        head = store.head_pose
+        lw = store.left_arm_pose
+        rw = store.right_arm_pose
+        lh = store.left_hand_positions
+        rh = store.right_hand_positions
 
         timestamps.append(now)
         n += 1
@@ -252,7 +150,7 @@ def run_measure(duration: float) -> dict:
         time.sleep(0.005)
 
     elapsed = timestamps[-1] - t0 if timestamps else 0
-    msgs_received = STORE.msg_count - msg_count_start
+    msgs_received = store.get_stats()["msg_count"] - msg_count_start
     poll_hz = n / elapsed if elapsed > 0 else 0
     msg_hz = msgs_received / elapsed if elapsed > 0 else 0
 
@@ -314,45 +212,32 @@ def append_report(path: Path, content: str) -> None:
             f.write(content)
 
 
-# ── server thread ─────────────────────────────────────────────────────
-async def _serve(port: int, ready: threading.Event) -> None:
-    runner = web.AppRunner(make_app())
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"[server] http://localhost:{port}/  (webxr_to_pose.html)", flush=True)
-    print(f"[server] ws://localhost:{port}/pose", flush=True)
-    ready.set()
-    while True:
-        await asyncio.sleep(3600)
-
-
-def _server_thread(port: int, ready: threading.Event) -> None:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_serve(port, ready))
-    except KeyboardInterrupt:
-        pass
-
-
 def main() -> int:
     args = _parse_args()
-    ready = threading.Event()
-    t = threading.Thread(target=_server_thread, args=(args.port, ready), daemon=True)
-    t.start()
-    ready.wait(timeout=5.0)
+    # port override via env (BridgePoseStore가 XR_BRIDGE_PORT를 읽음)
+    os.environ["XR_BRIDGE_PORT"] = str(args.port)
+
+    # BridgePoseStore import 후 인스턴스화 — ws server 자동 시작
+    from bridge_pose_store import BridgePoseStore
+    store = BridgePoseStore(
+        use_hand_tracking=True,
+        binocular=False,
+        img_shape=(480, 640),
+        display_fps=30.0,
+        display_mode="pass-through",
+        zmq=False,
+        webrtc=False,
+    )
 
     print()
     print("[init] Galaxy XR Chrome:")
     print(f"       http://localhost:{args.port}")
     print("       'Enter VR' 또는 'Enter AR' 클릭 후 손 들이밀기")
-    print(f"       (PC: adb reverse tcp:{args.port} tcp:{args.port} 필요)")
     input("[init] Enter 누르면 폴링 시작... ")
 
     try:
         if args.measure is not None:
-            report = run_measure(args.measure)
+            report = run_measure(store, args.measure)
             md = render_markdown(report)
             print(md)
             print("\n[measure] JSON:")
@@ -363,11 +248,13 @@ def main() -> int:
                 append_report(p, md)
                 print(f"[measure] appended → {p}")
         else:
-            run_smoke()
+            run_smoke(store)
     except KeyboardInterrupt:
         pass
     return 0
 
 
 if __name__ == "__main__":
+    # script directory를 sys.path 에 추가 (bridge_pose_store import 위해)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     sys.exit(main())

@@ -203,23 +203,29 @@ function onFrame(time, frame) {
     wsSend({ type: 'head', ts: time, matrix: Array.from(m) });
   }
 
-  // ── hand poses ───────────────────────────────────────────────────────
+  // ── hand poses (positions + orientations) ──────────────────────────
+  // orientations: 25 × [9 floats column-major 3x3] — TeleVuer extract_hand_poses
+  // 와 동일 layout (matrix[0..2] col 0, matrix[4..6] col 1, matrix[8..10] col 2)
   let curHandCount = 0;
   let firstWristStr = null;
+  const ZERO_ORI = [0,0,0, 0,0,0, 0,0,0];
   for (const src of frame.session.inputSources) {
     if (!src.hand) continue;
     curHandCount++;
     const positions = new Array(JOINT_NAMES.length);
+    const orientations = new Array(JOINT_NAMES.length);
     let wristMatrix = null;
     for (let i = 0; i < JOINT_NAMES.length; i++) {
       const joint = src.hand.get(JOINT_NAMES[i]);
-      if (!joint) { positions[i] = [0, 0, 0]; continue; }
+      if (!joint) { positions[i] = [0, 0, 0]; orientations[i] = ZERO_ORI; continue; }
       const jp = frame.getJointPose(joint, xrRefSpace);
-      if (!jp) { positions[i] = [0, 0, 0]; continue; }
+      if (!jp)   { positions[i] = [0, 0, 0]; orientations[i] = ZERO_ORI; continue; }
       const p = jp.transform.position;
       positions[i] = [p.x, p.y, p.z];
+      const m = jp.transform.matrix;
+      orientations[i] = [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]];
       if (i === 0) {  // wrist
-        wristMatrix = Array.from(jp.transform.matrix);
+        wristMatrix = Array.from(m);
         if (!firstWristStr) {
           firstWristStr = `${src.handedness}.wrist=[${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}]`;
         }
@@ -231,6 +237,7 @@ function onFrame(time, frame) {
         handedness: src.handedness,
         wrist: wristMatrix,
         positions: positions,
+        orientations: orientations,
       });
     }
   }
