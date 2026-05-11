@@ -1,0 +1,37 @@
+# Galaxy XR ws bridge 설정.
+# Python (BridgePoseStore) + HTML (webxr_to_pose) 양쪽이 이 한 파일을 참조한다.
+# - Python: bridge_pose_store.py 가 import time 에 yaml 로딩 후 자체 변수 설정 +
+#   /config endpoint 로 JSON export
+# - HTML: webxr_to_pose.html 이 페이지 로드 시 fetch('/config') 로 받아서
+#   webrtc port/host, plane 크기 등 적용. URL 쿼리 (?webrtc_port=, ?webrtc_off=
+#   등) 는 항상 우선 override
+#
+# 무선 환경 (조종 PC ↔ 로봇 PC WiFi) 전환 시 webrtc.host 만 변경하면 됨.
+# 다만 그 경우 헤드셋 ↔ 로봇 PC 직접 라우팅 가능 여부 + cert SAN 갱신이 필요
+# (자세한 검토는 docs/galaxy_xr_ws_bridge_integration.md §1.2 + §6 참고).
+
+ws:
+  # BridgePoseStore HTTP/WS server port. webxr_to_pose 가 여기로 접속해
+  # /pose 로 pose JSON 송신.
+  port: 8013
+
+webrtc:
+  # 영상 통합 (옵션 B1) 활성화. false 면 webxr_to_pose 가 plane 안 그림 (pose only).
+  enabled: true
+  # WebRTC offer endpoint host. same-host docker 환경에선 'localhost'.
+  # 무선 분리 시 로봇 PC IP (예: '192.168.1.10') 로 변경.
+  host: localhost
+  # 카메라별 offer endpoint port. sim host 측 cam_config_server.yaml 와 일치.
+  # 추후 wrist 카메라 추가 시 head/left_wrist/right_wrist 모두 사용 예정.
+  ports:
+    head: 60001
+    left_wrist: 60002
+    right_wrist: 60003
+
+render:
+  # head_camera plane 의 head-locked 위치/크기. camera space 에서:
+  # - distance_m: viewer 정면 거리 (-z 방향). 양수 입력 (코드가 음수화).
+  # - width_m / height_m: plane 한 변의 길이. 16:9 인 경우 1.6 × 0.9 권장.
+  plane_distance_m: 1.0
+  plane_width_m: 1.6
+  plane_height_m: 0.9

@@ -46,6 +46,62 @@ try:
 except ImportError as e:
     raise ImportError("aiohttp 필요. conda activate tv 또는 pip install aiohttp") from e
 
+try:
+    import yaml
+except ImportError as e:
+    raise ImportError("PyYAML 필요. pip install pyyaml") from e
+
+
+# ── config 로딩 (scripts/config.yaml) ──────────────────────────────────
+# Python 측 + HTML 측 (fetch '/config') 모두 같은 yaml 파일 한 곳을 참조.
+# 환경변수 XR_BRIDGE_CONFIG 로 다른 경로 지정 가능.
+_CONFIG_PATH = Path(os.environ.get(
+    "XR_BRIDGE_CONFIG",
+    str(Path(__file__).resolve().parent / "config.yaml")
+))
+
+_DEFAULT_CONFIG = {
+    "ws": {"port": 8013},
+    "webrtc": {
+        "enabled": True,
+        "host": "localhost",
+        "ports": {"head": 60001, "left_wrist": 60002, "right_wrist": 60003},
+    },
+    "render": {
+        "plane_distance_m": 1.0,
+        "plane_width_m": 1.6,
+        "plane_height_m": 0.9,
+    },
+}
+
+
+def load_config() -> dict:
+    """yaml 로딩 + missing key 는 default 로 채움. 파일 없으면 default 그대로."""
+    if not _CONFIG_PATH.exists():
+        print(f"[bridge_pose_store] config {_CONFIG_PATH} 없음 — default 사용")
+        return _DEFAULT_CONFIG.copy()
+    try:
+        with _CONFIG_PATH.open() as f:
+            loaded = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"[bridge_pose_store] config 로딩 실패: {e} — default 사용")
+        return _DEFAULT_CONFIG.copy()
+    # shallow merge — missing top-level 또는 nested key 는 default 로 보강
+    merged = {}
+    for k, dv in _DEFAULT_CONFIG.items():
+        v = loaded.get(k, dv)
+        if isinstance(dv, dict) and isinstance(v, dict):
+            merged[k] = {**dv, **v}
+            # one more level for webrtc.ports
+            if k == "webrtc" and "ports" in v and isinstance(v["ports"], dict):
+                merged[k]["ports"] = {**dv["ports"], **v["ports"]}
+        else:
+            merged[k] = v
+    return merged
+
+
+CONFIG = load_config()
+
 
 # WebXR 25-joint 이름 순서. webxr_to_pose.html 의 JOINT_NAMES 와 1:1 일치.
 JOINT_NAMES = [
@@ -170,7 +226,8 @@ class BridgePoseStore:
         self._stats_lock = threading.Lock()
 
         # ── start ws server in background thread ────────────────────────
-        self._port = int(os.environ.get("XR_BRIDGE_PORT", "8013"))
+        # port 결정 우선순위: XR_BRIDGE_PORT env > config.yaml ws.port > 8013 default
+        self._port = int(os.environ.get("XR_BRIDGE_PORT", str(CONFIG["ws"]["port"])))
         self._server_ready = threading.Event()
         self._server_thread = threading.Thread(
             target=self._server_thread_main, name="BridgePoseStoreWS", daemon=True
@@ -196,6 +253,7 @@ class BridgePoseStore:
         app = web.Application()
         app.router.add_get('/', self._index_handler)
         app.router.add_get('/pose', self._ws_handler)
+        app.router.add_get('/config', self._config_handler)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', self._port)
@@ -211,6 +269,10 @@ class BridgePoseStore:
         if not p.exists():
             return web.Response(status=404, text=f"missing {p}")
         return web.FileResponse(p)
+
+    async def _config_handler(self, _request: web.Request) -> web.Response:
+        # webxr_to_pose 가 fetch('/config') 로 호출. URL 쿼리 override 는 client 측에서.
+        return web.json_response(CONFIG)
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()

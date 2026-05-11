@@ -137,12 +137,37 @@ async function runAuto() {
   $btnAR.disabled = !arOK;
 }
 
-// ── WebRTC video stream (옵션 B1: head_camera 영상을 head-locked plane으로) ──
-// URL 쿼리로 동작 조절: ?webrtc_port=60001, ?webrtc_off=1
+// ── 설정 로딩 (scripts/config.yaml ← BridgePoseStore /config endpoint) ─
+// URL 쿼리는 항상 우선 override: ?webrtc_port, ?webrtc_host, ?webrtc_off=1,
+// ?plane_distance, ?plane_width, ?plane_height
 const URL_PARAMS = new URLSearchParams(location.search);
-const WEBRTC_PORT = parseInt(URL_PARAMS.get('webrtc_port') || '60001', 10);
-const WEBRTC_OFF  = URL_PARAMS.get('webrtc_off') === '1';
-const WEBRTC_HOST = location.hostname || 'localhost';
+// 일단 default 로 셋업, fetch('/config') 결과로 비동기 갱신
+let CONFIG = {
+  ws:     { port: 8013 },
+  webrtc: { enabled: true, host: 'localhost',
+            ports: { head: 60001, left_wrist: 60002, right_wrist: 60003 } },
+  render: { plane_distance_m: 1.0, plane_width_m: 1.6, plane_height_m: 0.9 },
+};
+// 도출 변수 — _applyConfig 가 갱신
+let WEBRTC_PORT, WEBRTC_OFF, WEBRTC_HOST;
+let PLANE_D, PLANE_W, PLANE_H;
+function _applyConfig() {
+  WEBRTC_PORT = parseInt(URL_PARAMS.get('webrtc_port') || String(CONFIG.webrtc.ports.head), 10);
+  WEBRTC_OFF  = URL_PARAMS.get('webrtc_off') === '1' || CONFIG.webrtc.enabled === false;
+  WEBRTC_HOST = URL_PARAMS.get('webrtc_host') || CONFIG.webrtc.host || location.hostname || 'localhost';
+  PLANE_D = parseFloat(URL_PARAMS.get('plane_distance') || String(CONFIG.render.plane_distance_m));
+  PLANE_W = parseFloat(URL_PARAMS.get('plane_width')    || String(CONFIG.render.plane_width_m));
+  PLANE_H = parseFloat(URL_PARAMS.get('plane_height')   || String(CONFIG.render.plane_height_m));
+}
+_applyConfig();
+// 비동기 로딩 — 페이지 로드 시 1회. WebRTC connect 는 startSession 에서
+// 호출되므로 그 전에 도착하면 OK.
+fetch('/config')
+  .then(r => r.ok ? r.json() : null)
+  .then(cfg => { if (cfg) { CONFIG = cfg; _applyConfig();
+                            autoLog(`config loaded: webrtc=${WEBRTC_HOST}:${WEBRTC_PORT} `
+                                  + `plane=${PLANE_D}m ${PLANE_W}×${PLANE_H}m`, 'ok'); } })
+  .catch(e => autoLog('config fetch failed (using defaults): ' + e.message, 'warn'));
 
 const videoEl = document.getElementById('webrtc-video');
 let pc = null;
@@ -239,10 +264,11 @@ void main() {
   uniformProj = gl.getUniformLocation(shaderProgram, 'u_proj');
   uniformTex  = gl.getUniformLocation(shaderProgram, 'u_tex');
 
-  // head-locked plane: viewer 앞 1m 거리, 16:9, 폭 1.6m × 높이 0.9m
-  // (camera space: view matrix 곱 안 함 → 양 눈에서 같은 위치라 head-attached)
-  const D = -1.0;
-  const W = 0.8, H = 0.45;
+  // head-locked plane: config 의 PLANE_D / PLANE_W / PLANE_H 적용.
+  // PLANE_W/H 는 plane 전체 폭/높이 → ±W/2, ±H/2 로 quad 생성.
+  // camera space: view matrix 곱 안 함 → 양 눈에서 같은 위치라 head-attached.
+  const D = -PLANE_D;
+  const W = PLANE_W / 2, H = PLANE_H / 2;
   const verts = new Float32Array([
     // x, y, z,     u, v
     -W, -H, D,     0.0, 1.0,
