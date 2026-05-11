@@ -34,7 +34,7 @@ kTopicLowState = "rt/lowstate"
 # UR10e: 6 motor (DDS index 0..5)
 UR10E_Num_Motors = 6
 # sim 보고서 §1.2 init pose
-UR10E_INIT_POSE = np.array([0.0, -1.57, +1.57, -1.57, -1.57, 0.0], dtype=np.float64)
+UR10E_INIT_POSE = np.array([2.40, -1.18, 2.06, -0.88, 2.24, 0.0], dtype=np.float64)
 
 
 class UR10e_JointIndex(IntEnum):

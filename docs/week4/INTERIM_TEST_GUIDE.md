@@ -219,7 +219,15 @@ Quest 3 Chrome:
 1. `https://localhost:60001` → cert 신뢰
 2. `https://localhost:60003` → cert 신뢰
 3. `http://localhost:8012` → Enter VR → 손 들이밀기
-4. Terminal 2 에서 `r` 키 → sync 시작
+4. **사용자에게 편한 손 자세로 (팔꿈치 ~90°)** Terminal 2 에서 `r` 키 → **현재 손 위치 = 현재 robot 위치 origin 으로 캡처 + sync 시작**
+
+키 매핑:
+- `r` — sync 시작 + 첫 origin 캡처
+- `c` — recalibrate (현재 손 = 현재 robot 새 origin)
+- `q` — quit
+
+옵션:
+- `--scale 1.5` — position scale factor (default 1.0 = 1:1). rotation 은 항상 1:1.
 
 ### 5.3 Gate 4 통과 기준 (요약)
 

@@ -129,12 +129,20 @@ def _sanity_check() -> None:
 START = False
 STOP = False
 READY = False
+# Relative motion origin re-capture flag.
+# - 'r' 키 (sync 시작) 시 자동으로 True 로 → 첫 capture
+# - 'c' 키 (recalibrate) 시 True 로 → 동작 중 origin 재캡처
+RECALIBRATE = False
 
 
 def on_press(key):
-    global START, STOP
+    global START, STOP, RECALIBRATE
     if key == "r":
         START = True
+        RECALIBRATE = True   # sync 시작 시점에 첫 origin capture
+    elif key == "c":
+        RECALIBRATE = True   # 동작 중 재캘리 (현재 사용자 손 위치 = 현재 robot 위치를 새 origin 으로)
+        print("[on_press] 'c' pressed — recalibrate scheduled.")
     elif key == "q":
         START = False
         STOP = True
@@ -163,6 +171,10 @@ def main() -> int:
                         help="CycloneDDS network interface")
     parser.add_argument("--sim", action="store_true", default=True,
                         help="IsaacSim mode (보고서 §2: ChannelFactoryInitialize(1))")
+    parser.add_argument("--scale", type=float, default=1.0,
+                        help="Position scale factor for relative motion. "
+                             "1.0 = 직관적 1:1 (사용자 손 10cm → robot 10cm). "
+                             ">1.0 = robot 더 크게 움직임. Rotation 은 항상 1:1.")
     args = parser.parse_args()
 
     print(f"[run_teleop_ur10e] args: {args}", flush=True)
@@ -249,7 +261,9 @@ def main() -> int:
     # 10) wait for [r]
     print("─" * 60, flush=True)
     print("🟢  Press [r] to start syncing Quest 3 hand → UR10e + DG-5F", flush=True)
+    print("🟡  Press [c] to recalibrate (현재 손 위치 = 현재 robot 위치 새 origin)", flush=True)
     print("🔴  Press [q] to stop and exit", flush=True)
+    print(f"📐  Position scale factor: {args.scale}  (rotation 은 항상 1:1)", flush=True)
     print("⚠️   Quest 3 USB-C + adb reverse tcp:8012/60001/60003 확인", flush=True)
     print("─" * 60, flush=True)
     global READY
@@ -272,8 +286,11 @@ def main() -> int:
     print("─" * 60, flush=True)
     arm_ctrl.speed_gradual_max()
 
-    # 11) main loop
+    # 11) main loop with relative motion (사용자 손 origin ↔ robot origin)
     dummy_left_wrist = np.eye(4)   # single-arm: left 무시
+    origin_user_pose = None        # Quest 3 wrist (4,4) at calibrate 시점
+    origin_robot_pose = None       # UR10e wrist_3_link (4,4) at calibrate 시점
+    global RECALIBRATE
     try:
         while not STOP:
             t0 = time.time()
@@ -296,18 +313,40 @@ def main() -> int:
             current_q = arm_ctrl.get_current_dual_arm_q()
             current_dq = arm_ctrl.get_current_dual_arm_dq()
 
-            # 11.5) IK 풀이 (right wrist only)
+            # 11.5) Relative motion calibration
+            # 'r' 키 (첫 sync) 또는 'c' 키 (재캘리) 시 origin 재캡처.
+            if RECALIBRATE:
+                origin_user_pose = tele_data.right_wrist_pose.copy()
+                origin_robot_pose = arm_ik.forward_kinematics(current_q).homogeneous
+                print(f"[run_teleop_ur10e] calibrated.\n"
+                      f"  user origin p = {origin_user_pose[:3, 3]}\n"
+                      f"  robot origin p = {origin_robot_pose[:3, 3]}", flush=True)
+                RECALIBRATE = False
+                # 캘리 직후 target = robot origin 그대로 (지터 회피).
+                target_pose = origin_robot_pose
+            else:
+                # user delta in world frame
+                curr_user = tele_data.right_wrist_pose
+                delta_p = (curr_user[:3, 3] - origin_user_pose[:3, 3]) * args.scale
+                R_delta = curr_user[:3, :3] @ origin_user_pose[:3, :3].T
+
+                # robot target = robot origin + user delta (translation, rotation)
+                target_pose = np.eye(4)
+                target_pose[:3, 3] = origin_robot_pose[:3, 3] + delta_p
+                target_pose[:3, :3] = R_delta @ origin_robot_pose[:3, :3]
+
+            # 11.6) IK 풀이 (relative target)
             sol_q, sol_tauff = arm_ik.solve_ik(
                 dummy_left_wrist,
-                tele_data.right_wrist_pose,
+                target_pose,
                 current_lr_arm_motor_q=current_q,
                 current_lr_arm_motor_dq=current_dq,
             )
 
-            # 11.6) arm DDS publish
+            # 11.7) arm DDS publish
             arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
 
-            # 11.7) frequency control
+            # 11.8) frequency control
             elapsed = time.time() - t0
             time.sleep(max(0, 1.0 / args.frequency - elapsed))
     except KeyboardInterrupt:

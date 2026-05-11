@@ -34,7 +34,7 @@ UR10E_JOINT_NAMES = [
     "wrist_2_joint",
     "wrist_3_joint",
 ]
-UR10E_INIT_POSE = np.array([0.0, -1.57, +1.57, -1.57, -1.57, 0.0], dtype=np.float64)
+UR10E_INIT_POSE = np.array([2.40, -1.18, 2.06, -0.88, 2.24, 0.0], dtype=np.float64)
 UR10E_EE_LINK = "wrist_3_link"
 
 # 본 repo 의 UR10e URDF 위치 (assets/ur10e_dg5f/ur10e.urdf)

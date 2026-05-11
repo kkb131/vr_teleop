@@ -8,6 +8,88 @@
 
 본 docker Claude Code 는 sim docker 에 접근 불가 — Unit 5 deliverable 은 **테스트 절차 문서 + 측정 양식 + 사용자가 보고할 결과 template**.
 
+### 2026-05-11 1차 실측 후 사용자 피드백 + 처방
+
+사용자 실측 결과:
+- ✅ Quest 3 wrist pose 값에 맞춰 UR10e 움직임
+- ❌ **로봇 초기 위치와 핸드 초기 위치 불일치 → 이상한 자세로 시작**
+
+사용자 결정:
+- init pose 임시 `[2.40, -1.18, 2.06, -0.88, 2.24, 0.0]` 로 변경 (사용자가 [scripts/ur10e_arm_ik.py:37](../../scripts/ur10e_arm_ik.py#L37), [scripts/ur10e_arm_controller.py:37](../../scripts/ur10e_arm_controller.py#L37) 직접 수정). 향후 재변경 가능.
+- **Relative motion 캘리브레이션** 추가 — init pose 와 무관하게 매번 sync 시작 시점에 origin 캡처해 delta 만 robot 에 전달.
+
+처방 적용 (Unit 5+ 작업):
+- `run_teleop_ur10e.py` main loop 에 relative motion 패턴 적용 (Week 4 R2 한계의 정확한 처방).
+- `r` 키 sync 시작 시점 / `c` 키 (recalibrate) 시점에 origin 재캡처.
+- `--scale` argparse 추가 (default 1.0, position 만 — rotation 은 항상 1:1).
+
+자세한 동작은 §3.1 참조.
+
+---
+
+## 3.1 Relative motion 캘리브레이션 (Unit 5+ 추가)
+
+### 작동 원리
+
+`run_teleop_ur10e.py` main loop 안에서 매 frame:
+
+```python
+# 'r' 키 (sync 시작) 또는 'c' 키 (재캘리) 시
+if RECALIBRATE:
+    origin_user_pose  = tele_data.right_wrist_pose.copy()       # Quest 3 wrist (4,4)
+    origin_robot_pose = arm_ik.forward_kinematics(current_q).homogeneous   # UR10e wrist_3_link (4,4)
+    RECALIBRATE = False
+    target_pose = origin_robot_pose   # 캘리 직후 jitter 회피
+else:
+    curr_user = tele_data.right_wrist_pose
+    delta_p   = (curr_user[:3, 3] - origin_user_pose[:3, 3]) * args.scale
+    R_delta   = curr_user[:3, :3] @ origin_user_pose[:3, :3].T   # world-frame rotation
+    target_pose       = np.eye(4)
+    target_pose[:3,3] = origin_robot_pose[:3, 3] + delta_p
+    target_pose[:3,:3] = R_delta @ origin_robot_pose[:3, :3]
+
+sol_q = arm_ik.solve_ik(np.eye(4), target_pose, current_q)
+```
+
+핵심 효과:
+- **init pose 와 무관**: robot 의 init pose 가 어떤 값이든 origin_robot_pose 가 그것을 캡처. init pose 변경되어도 코드 수정 없이 동작.
+- **사용자가 손을 그대로 두면 robot 도 origin 유지** (이상한 자세로 튀어가지 않음).
+- **1:1 delta mapping** (default `--scale 1.0`): 사용자 손 10cm 움직이면 robot 도 10cm.
+- **Rotation 은 항상 1:1**: world-frame rotation `R_delta = R_curr @ R_origin.T`. scale 안 함.
+
+### 키 매핑
+
+| 키 | 동작 |
+|---|---|
+| **r** | sync 시작 + **첫 origin 캡처** |
+| **c** | recalibrate — 현재 손 위치 = 현재 robot 위치를 **새 origin** 으로 |
+| **q** | stop / exit |
+
+사용 시나리오:
+1. sim 부팅 + xr_teleop 부팅 → Quest 3 Enter VR + 손 들기
+2. 손이 사용자에게 편한 위치 (팔꿈치 약 90°) 에 놓은 상태에서 `r` 키
+3. 사용자가 손 움직이면 robot 이 같은 delta 만큼 움직임
+4. 손이 어색한 위치로 이동했을 때 → 손 다시 편한 위치로 → `c` 키 → 새 origin → 계속 진행
+5. `q` 키 또는 Ctrl+C 종료
+
+### `--scale` 옵션
+
+```bash
+python scripts/run_teleop_ur10e.py             # default --scale 1.0 (1:1)
+python scripts/run_teleop_ur10e.py --scale 1.5 # 사용자 손 10cm → robot 15cm
+```
+
+Position 만 scaling, rotation 은 항상 1:1.
+
+### Smoke 검증
+
+```bash
+python /workspaces/tamp_ws/src/xr_teleop/scripts/run_teleop_ur10e.py --help
+# → --scale SCALE 옵션 표시 + Position scale factor 설명
+```
+
+state transition 검증 (`r` → START+RECALIBRATE, `c` → RECALIBRATE, `q` → STOP) — 단위 테스트 PASS.
+
 ---
 
 ## 1. 사전 점검 (절대 빠지면 안 되는 4 가지)
