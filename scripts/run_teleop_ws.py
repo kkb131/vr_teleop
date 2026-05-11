@@ -45,22 +45,38 @@ def _parse_wrapper_args() -> tuple[argparse.Namespace, list[str]]:
 
 
 def _inject_bridge_pose_store() -> None:
-    """televuer.televuer.TeleVuer 클래스를 BridgePoseStore 로 monkey-patch.
+    """`TeleVuer` 클래스를 BridgePoseStore 로 세 군데 동시 monkey-patch.
 
-    TeleVuerWrapper.__init__ (tv_wrapper.py:195) 안에서 `self.tvuer = TeleVuer(...)`
-    호출 시 우리 BridgePoseStore 인스턴스가 만들어진다. BridgePoseStore 는 자체
-    aiohttp ws server (port 8013) 를 background thread 로 자동 시작 + TeleVuer 와
-    동일 시그니처/property/method 를 제공하므로 TeleVuerWrapper 측 코드는 변경 zero.
+    tv_wrapper.py:2 가 `from .televuer import TeleVuer` 로 직접 import + 같은
+    파일 line 238 이 bare name `TeleVuer(...)` 로 호출한다. 또 televuer/__init__.py
+    도 동일하게 `from .televuer import TeleVuer` 로 re-export 한다.
+
+    Python 의 `from X import Y` 는 import 시점에 import 한 모듈의 local namespace
+    에 `Y` 이름이 생기고 그 시점의 원본 객체를 가리킨다. 그러므로 `televuer.televuer
+    .TeleVuer = BridgePoseStore` 만 patch 해서는 tv_wrapper 모듈 / 패키지 namespace
+    의 캐시된 `TeleVuer` 이름이 변경 안 됨 → TeleVuerWrapper 가 여전히 원본 vuer
+    기반 TeleVuer 를 instantiate. (test_pose_only_ws.py 는 BridgePoseStore 를 직접
+    호출하므로 영향 없었음.)
+
+    따라서 세 모듈을 모두 명시적으로 import 한 후 BridgePoseStore 로 교체:
+    - televuer.televuer (원본 클래스 정의 모듈)
+    - televuer.tv_wrapper (직접 import + bare name 호출)
+    - televuer (패키지 __init__.py re-export)
     """
-    # scripts/ 디렉토리를 sys.path 에 추가 (bridge_pose_store import 위해)
-    setup_dir = Path(__file__).resolve().parent
-    sys.path.insert(0, str(setup_dir))
+    scripts_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(scripts_dir))
 
+    # 모든 모듈을 미리 import 시켜 import-time `TeleVuer` 이름 캐시를 안정화
+    import televuer as _tv_pkg
     import televuer.televuer as _tv_mod
+    import televuer.tv_wrapper as _wrapper_mod
     from bridge_pose_store import BridgePoseStore
 
     _tv_mod.TeleVuer = BridgePoseStore
-    print("[run_teleop_ws] televuer.TeleVuer → BridgePoseStore monkey-patched", flush=True)
+    _wrapper_mod.TeleVuer = BridgePoseStore
+    _tv_pkg.TeleVuer = BridgePoseStore
+    print("[run_teleop_ws] televuer.TeleVuer / tv_wrapper.TeleVuer / 패키지 모두 "
+          "BridgePoseStore 로 patch", flush=True)
 
 
 def _ensure_sim_defaults(passthrough: list[str]) -> list[str]:
