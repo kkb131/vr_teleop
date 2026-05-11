@@ -1,0 +1,49 @@
+# Tesollo DG-5F (5-finger dex hand) — right hand only.
+# Single-hand only — UR10e + DG-5F sim/real 환경에서 right hand만 사용.
+# Inspire/Dex3 패턴 따라 작성. sim 보고서 §1.3 (joint sign convention) 준수.
+#
+# 핵심 설계:
+# - retargeting target: 5 fingertip palm→tip vector + thumb 외전(rj_dg_1_1)
+# - target_joint_names = 손가락당 _1 또는 _2 핵심 joint 6개
+#   (각 손가락 _3, _4 distal은 retargeting 외에서 _2의 비례로 확장 — DG5F_Controller 측 책임)
+# - thumb rj_dg_1_2 limit = (-π, 0.0) → flexion 방향 NEGATIVE.
+#   yourdfpy/pinocchio가 URDF limit 그대로 전달하면 dex_retargeting이 자동 처리.
+#   (단위 테스트에서 thumb-tip이 손바닥 안쪽으로 굽는지 확인)
+#
+# DDS index ↔ target_joint_names 매핑 (DG5F_Controller가 사용):
+#   DDS 0  = rj_dg_1_1  (thumb 외전)            ← retarget
+#   DDS 1  = rj_dg_1_2  (thumb 굴곡, NEGATIVE)  ← retarget
+#   DDS 2  = rj_dg_1_3  (thumb mid)             ← _2에서 mimic 0.6
+#   DDS 3  = rj_dg_1_4  (thumb tip)             ← _2에서 mimic 0.4
+#   DDS 4  = rj_dg_2_1  (index 외전)            ← retarget? 또는 0
+#   DDS 5  = rj_dg_2_2  (index 굴곡, POSITIVE)  ← retarget
+#   ...
+# (확정은 단위 테스트 결과 따라 — Day 1 spike 참조)
+
+right:
+  type: vector
+  urdf_path: dg5f_hand/dg5f_right.urdf
+
+  # 6 target joint: thumb 외전+굴곡, index/middle/ring/pinky 굴곡 (외전은 일단 fix=0)
+  target_joint_names:
+    - "rj_dg_1_1"   # thumb 외전 — limit (-0.38, +0.89)
+    - "rj_dg_1_2"   # thumb 굴곡 — limit (-π, 0.0)  ← NEGATIVE 방향
+    - "rj_dg_2_2"   # index 굴곡 — limit (0, +2.0)
+    - "rj_dg_3_2"   # middle 굴곡 — limit (0, +1.95)
+    - "rj_dg_4_2"   # ring 굴곡 — limit (0, +1.90)
+    - "rj_dg_5_2"   # pinky 굴곡 — limit (-0.42, +0.61)
+
+  # vector retargeting — 5 fingertip palm-to-tip vector
+  # origin = palm, task = fingertip. 6 target joint를 5 vector cost로 풀이.
+  # (6번째 자유도는 thumb 외전이 fingertip 위치에도 영향 주므로 자연스럽게 풀림)
+  target_origin_link_names: [ "rl_dg_palm", "rl_dg_palm", "rl_dg_palm", "rl_dg_palm", "rl_dg_palm" ]
+  target_task_link_names:   [ "rl_dg_1_tip", "rl_dg_2_tip", "rl_dg_3_tip", "rl_dg_4_tip", "rl_dg_5_tip" ]
+
+  # human indices (WebXR 25-joint):
+  #   0=wrist (origin), 4=thumb-tip, 9=index-tip, 14=middle-tip, 19=ring-tip, 24=pinky-tip
+  target_link_human_indices_vector: [[0, 0, 0, 0, 0], [4, 9, 14, 19, 24]]
+
+  # DG-5F palm-to-tip length vs human hand. 보고서엔 정확한 수치 없음. 1.0 시작 후 단위 테스트에서 조정.
+  scaling_factor: 1.0
+  # EMA smoothing (Inspire/Dex3와 동일)
+  low_pass_alpha: 0.2
