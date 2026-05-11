@@ -181,9 +181,61 @@ Quest 3:
 
 Terminal 2 에서 `q` 키 또는 Ctrl+C. `arm_ctrl.ctrl_dual_arm_go_home()` 으로 init pose 복귀 후 종료.
 
-## Unit 5: End-to-end Quest 3 → sim (대기)
+## Unit 5: Quest 3 E2E (⏳ 사용자 실측 대기)
 
-(작업 진행 시 추가)
+### 5.1 무엇이 필요한가
+
+본 docker 의 코드는 Unit 1-4 모두 완료. 사용자가 직접 다음 3 가지를 동시 부팅해 측정:
+
+1. **sim docker** (`./custom/scripts/run_ur10e_dg5f.sh --headless`)
+2. **xr_teleop docker** (`python scripts/run_teleop_ur10e.py`)
+3. **Quest 3** (USB-C 연결 + adb reverse + Chrome 으로 vuer 접속)
+
+상세 절차 + Gate 4 측정 14 항목 + 알려진 issue 처방 4 개: [day5_e2e_spike.md](day5_e2e_spike.md).
+
+### 5.2 요약 절차
+
+```bash
+# Terminal 1 (sim docker):
+cd /workspace/isaaclab/datasets/unitree_sim_isaaclab
+./custom/scripts/run_ur10e_dg5f.sh --headless
+
+# Terminal 2 (xr_teleop docker):
+conda activate tv && unset PYTHONPATH
+source /workspaces/tamp_ws/src/xr_teleop/scripts/dds_env.sh
+# Quest 3 USB-C 연결 후:
+adb reverse tcp:8012 tcp:8012
+adb reverse tcp:60001 tcp:60001
+adb reverse tcp:60003 tcp:60003
+
+# DDS connectivity smoke
+python /workspaces/tamp_ws/src/xr_teleop/scripts/test_dds_sim.py
+
+# teleop entry
+python /workspaces/tamp_ws/src/xr_teleop/scripts/run_teleop_ur10e.py
+```
+
+Quest 3 Chrome:
+1. `https://localhost:60001` → cert 신뢰
+2. `https://localhost:60003` → cert 신뢰
+3. `http://localhost:8012` → Enter VR → 손 들이밀기
+4. Terminal 2 에서 `r` 키 → sync 시작
+
+### 5.3 Gate 4 통과 기준 (요약)
+
+| # | 항목 | 기준 |
+|---|---|---|
+| 1 | DDS rt/lowstate / rt/dg5f/state | 정상 rate |
+| 2 | Quest 3 vuer 영상 표시 | head camera 보임 |
+| 3 | UR10e tool0 추종 | 시각 정성 OK + < 10 cm |
+| 4 | DG-5F 손가락 굽힘 | 시각 정성 OK |
+| 5 | 30s 측정 hang 없음 | 30Hz smooth |
+
+상세 14 항목 + 알려진 issue 처방: [day5_e2e_spike.md](day5_e2e_spike.md) §3, §4.
+
+### 5.4 측정 후 사용자 회신
+
+`day5_e2e_spike.md` §5 양식 따라 결과 회신 → 본 docker Claude Code 가 `week4_report.md` §2.1 의 U5 행 update + Gate 4 판정 + Week 5 plan 진입.
 
 ---
 
