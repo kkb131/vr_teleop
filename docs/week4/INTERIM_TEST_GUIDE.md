@@ -76,9 +76,34 @@ retargeting config만 있고 controller / IK / 통합이 없어 **실제 Quest 3
 
 ---
 
-## Unit 2: UR10e_ArmIK (대기)
+## Unit 2: UR10e_ArmIK (✅ 2026-05-11)
 
-(작업 진행 시 추가)
+### 2.1 무엇이 추가됐나
+
+- [assets/ur10e_dg5f/ur10e.urdf](../../assets/ur10e_dg5f/ur10e.urdf) — UR10e URDF (`src/tamp_dev/.docker/assets/`에서 copy)
+- [scripts/ur10e_arm_ik.py](../../scripts/ur10e_arm_ik.py) — `UR10e_ArmIK` 클래스 (Pinocchio + CasADi single-arm, wrist_3_link EE)
+- [scripts/test_ur10e_ik.py](../../scripts/test_ur10e_ik.py) — 100-trial round-trip 단위 테스트
+
+### 2.2 검증 명령
+
+```bash
+conda activate tv && unset PYTHONPATH
+python /workspaces/tamp_ws/src/xr_teleop/scripts/test_ur10e_ik.py
+```
+
+### 2.3 통과 기준
+
+```
+position err  median < 5 mm    (실측 2.63 mm)
+solve time    mean   < 50 ms   (실측 1.8 ms — 30Hz 여유)
+fail rate     < 5%              (실측 0/100)
+```
+
+상세: [day2_ur10e_ik_spike.md](day2_ur10e_ik_spike.md).
+
+### 2.4 Unit 2까지로는 sim teleop 불가
+
+IK 솔버만 작성. DDS publisher (Unit 3) + teleop entry (Unit 4) 추가 후 sim 연결 가능.
 
 ## Unit 3: Controllers (대기)
 
