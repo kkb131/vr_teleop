@@ -444,7 +444,7 @@ Files added/modified:
 - xr_teleoperate에 `DG5F_Controller` (rt/dg5f/cmd publisher) 추가
 - `dex_retargeting` 라이브러리에 DG-5F config 등록 (Inspire 패턴 복제)
 - `teleop_hand_and_arm.py`에 `--arm ur10e --ee dg5f` 분기
-- 본 docker 측 `setup/test_dds_ur10e.py` 작성
+- 본 docker 측 `scripts/test_dds_ur10e.py` 작성
 - end-to-end smoke test (Quest 3 → vuer → IsaacSim UR10e tool0 추종 + DG-5F 손가락 동작)
 - Week 4 report 작성
 

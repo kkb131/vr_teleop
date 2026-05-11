@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Galaxy XR ↔ televuer connectivity 5단계 진단.
 #
-# 사용 시점: setup/test_pose_only.py를 PC에서 실행한 상태에서 (별도 터미널에서)
+# 사용 시점: scripts/test_pose_only.py를 PC에서 실행한 상태에서 (별도 터미널에서)
 #            돌리면 가장 정확. 서버가 안 떠 있어도 1, 4단계는 점검 가능.
 #
 # Usage:
-#   bash setup/diagnose.sh
+#   bash scripts/diagnose.sh
 
 set -uo pipefail
 
@@ -28,7 +28,7 @@ PASS=0; FAILS=0
 # ── 1. cert 파일 존재 + SAN 포함 확인 ──────────────────────────────────
 hdr "1. SSL cert (~/.config/xr_teleoperate/)"
 if [ ! -f "$CONF_DIR/cert.pem" ] || [ ! -f "$CONF_DIR/key.pem" ]; then
-  fail "cert.pem / key.pem 없음 → bash setup/gen_certs.sh"
+  fail "cert.pem / key.pem 없음 → bash scripts/gen_certs.sh"
   ((FAILS++))
 else
   ok   "cert/key 파일 존재"
@@ -37,7 +37,7 @@ else
     ok   "SubjectAltName(SAN) 포함됨"
     ((PASS++))
   else
-    fail "SAN 누락 — Chrome 58+가 거부함. bash setup/gen_certs.sh --force 로 재생성"
+    fail "SAN 누락 — Chrome 58+가 거부함. bash scripts/gen_certs.sh --force 로 재생성"
     ((FAILS++))
   fi
 fi
@@ -46,7 +46,7 @@ fi
 hdr "2. vuer server LISTEN on :${PORT}"
 LISTEN=$(ss -tlnH 2>/dev/null | awk -v p=":$PORT" '$4 ~ p {print $4}' | head -1)
 if [ -z "$LISTEN" ]; then
-  fail "포트 $PORT 에 LISTEN 없음 → 다른 터미널에서 'python3 setup/test_pose_only.py' 먼저 실행"
+  fail "포트 $PORT 에 LISTEN 없음 → 다른 터미널에서 'python3 scripts/test_pose_only.py' 먼저 실행"
   ((FAILS++))
 else
   ok   "$PORT LISTEN: $LISTEN"
@@ -115,7 +115,7 @@ if [ "$FAILS" -eq 0 ]; then
   else
     echo "  Galaxy XR Chrome → https://localhost:${PORT}    (cert 경고 → '고급 → 진행')"
     echo "    cert 경고 자체가 안 뜨거나 'no data' 표시 시:"
-    echo "      - PC에서 Ctrl+C 후 'python3 setup/test_pose_only.py --http' 로 재시작 (권장)"
+    echo "      - PC에서 Ctrl+C 후 'python3 scripts/test_pose_only.py --http' 로 재시작 (권장)"
     echo "      - chrome://flags/#allow-insecure-localhost   enable + Chrome 재시작"
     echo "      - chrome://net-internals/#hsts               'Delete domain security policies' 에 localhost 입력"
   fi

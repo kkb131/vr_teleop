@@ -1,2 +1,7 @@
 # upstream Unitree xr_teleoperate clone — 별도 repo이므로 우리 git 추적 제외
 xr_teleoperate/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+*.pyo

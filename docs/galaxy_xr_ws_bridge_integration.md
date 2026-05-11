@@ -2,7 +2,7 @@
 
 **작성일**: 2026-05-11
 **대상**: Week 4 진입 시점, G1+Dex3 환경 기준 (Week 4-6 UR10e+DG-5F 교체 후에도 동일 패턴 적용)
-**목적**: 검증된 Galaxy XR ws bridge(`setup/test_pose_only_ws.py` + `setup/webxr_to_pose.html`)를 [teleop_hand_and_arm.py](../xr_teleoperate/teleop/teleop_hand_and_arm.py)와 통합하기 위한 옵션 분석 + 권장 우선순위
+**목적**: 검증된 Galaxy XR ws bridge(`scripts/test_pose_only_ws.py` + `assets/webxr_to_pose.html`)를 [teleop_hand_and_arm.py](../xr_teleoperate/teleop/teleop_hand_and_arm.py)와 통합하기 위한 옵션 분석 + 권장 우선순위
 **가장 큰 검토 포인트**: 카메라 영상(teleimager) 통합 시 unitree 측(`xr_teleoperate` / `teleimager` / `televuer`) 코드 변경 최소화
 
 ---
@@ -20,7 +20,7 @@ Galaxy XR Chrome에서 vuer 0.0.60 client React가 **immersive XR session 진입
 - **`useFrame`이 R3F의 frame loop에 의존** — Galaxy XR Chrome immersive 진입 시 일반 RAF가 멈추는데(XR-RAF로 전환됨) vuer 0.0.60의 R3F Canvas가 XR-RAF로 제대로 전환 안 되거나 stale 상태로 남아 `useFrame` 안에서 G 채우기/store 추적이 멈추고, 결과적으로 publish callback 안 들어옴 — 가장 유력한 가설(완전 입증은 minified bundle inspect 필요)
 - 이 freeze는 **pose뿐 아니라 vuer scene 안 `WebRTCVideoPlane` 렌더링도 동시에 영향** — 즉 영상 streaming도 같은 경로 의존
 
-검증된 우회: [setup/webxr_to_pose.html](../setup/webxr_to_pose.html)이 `xrSession.requestAnimationFrame`(XR-RAF) 기반 onFrame loop에서 매 프레임 head/hand pose를 추출해 [setup/test_pose_only_ws.py](../setup/test_pose_only_ws.py)의 ws server로 JSON 송신. 사용자 실측 결과 head/LW/RW/LH/RH 모두 OK, hand_pos가 손 움직임 따라 변동(`[-0.03, +0.08, -0.31]` 같은 HMD 상대좌표).
+검증된 우회: [assets/webxr_to_pose.html](../assets/webxr_to_pose.html)이 `xrSession.requestAnimationFrame`(XR-RAF) 기반 onFrame loop에서 매 프레임 head/hand pose를 추출해 [scripts/test_pose_only_ws.py](../scripts/test_pose_only_ws.py)의 ws server로 JSON 송신. 사용자 실측 결과 head/LW/RW/LH/RH 모두 OK, hand_pos가 손 움직임 따라 변동(`[-0.03, +0.08, -0.31]` 같은 HMD 상대좌표).
 
 ### 0.2 다음 단계의 목표
 
@@ -73,7 +73,7 @@ teleimager는 sim host(별도 docker)의 `image_server.py`에서 카메라 frame
 - sim host: [image_server.py:35-38](../xr_teleoperate/teleop/teleimager/src/teleimager/image_server.py#L35-L38)에서 `aiortc.RTCPeerConnection` 사용, [`/offer` HTTP POST endpoint](../xr_teleoperate/teleop/teleimager/src/teleimager/image_server.py#L353) (port 60001/60002/60003)
 - PC는 안 거치고 **vuer client React가 직접** `WebRTCVideoPlane(src=webrtc_url)`에서 fetch+RTCPeerConnection으로 sim host에 negotiate → 헤드셋 안에서 video track 직접 render
 
-[run_teleop.py:59-74](../setup/run_teleop.py#L59-L74)가 `--img-server-ip localhost` default로 cert 신뢰 host 일치시킴.
+[run_teleop.py:59-74](../scripts/run_teleop.py#L59-L74)가 `--img-server-ip localhost` default로 cert 신뢰 host 일치시킴.
 
 ### 1.3 Galaxy XR Chrome에서 두 경로 모두 막힘
 
@@ -86,9 +86,9 @@ teleimager는 sim host(별도 docker)의 `image_server.py`에서 카메라 frame
 
 | 파일 | 역할 |
 |---|---|
-| [setup/test_pose_only_ws.py](../setup/test_pose_only_ws.py) | aiohttp ws server (port 8013) — `/`에서 HTML 정적 서빙, `/pose`에서 ws receive. `PoseStore`에 head/hand pose 채움. smoke/measure 모드 |
-| [setup/webxr_to_pose.html](../setup/webxr_to_pose.html) | XR-RAF onFrame loop에서 매 프레임 head + 양손 25-joint를 JSON 송신. 자동 reconnect |
-| [setup/webxr_check.html](../setup/webxr_check.html) | 진단용 (vuer 무관 WebXR API 동작 검증). visibility / setInterval throttle 카운터 포함 |
+| [scripts/test_pose_only_ws.py](../scripts/test_pose_only_ws.py) | aiohttp ws server (port 8013) — `/`에서 HTML 정적 서빙, `/pose`에서 ws receive. `PoseStore`에 head/hand pose 채움. smoke/measure 모드 |
+| [assets/webxr_to_pose.html](../assets/webxr_to_pose.html) | XR-RAF onFrame loop에서 매 프레임 head + 양손 25-joint를 JSON 송신. 자동 reconnect |
+| [assets/webxr_check.html](../assets/webxr_check.html) | 진단용 (vuer 무관 WebXR API 동작 검증). visibility / setInterval throttle 카운터 포함 |
 
 `PoseStore`는 현재 thread-safe `np.ndarray` (multiprocessing은 아님). teleop_hand_and_arm.py 통합 시 multiprocessing.Array로 발전시켜야 한다.
 
@@ -132,9 +132,9 @@ Sim host docker (변경 없음)
 ```
 
 **변경 위치 / 양**:
-- [setup/test_pose_only_ws.py](../setup/test_pose_only_ws.py) — `PoseStore` → `BridgePoseStore` 발전. multiprocessing.Array 변수명을 [televuer.py:138-173](../xr_teleoperate/teleop/televuer/src/televuer/televuer.py#L138-L173)과 100% 일치시킴. TeleVuer가 노출하는 모든 property (`head_pose`, `left_arm_pose`, `left_hand_positions`, `left_hand_orientations`, `left_hand_pinch`, `*_pinchValue`, ...)를 동일 시그니처로 구현. `render_to_xr(frame)`은 noop(또는 향후 옵션 B2로 발전 시 ws binary 송신 진입점). 100-200줄 추가
-- 새 파일: `setup/run_teleop_ws.py` — [run_teleop.py](../setup/run_teleop.py)와 같은 wrapper 패턴. 차이는 `_apply_http_monkey_patch` 대신 **`_inject_bridge_pose_provider`**: TeleVuerWrapper 생성 시 `tvuer` 키워드를 우리 BridgePoseStore로 monkey-patch. cwd 변경 + sanity check 동일
-- [webxr_to_pose.html](../setup/webxr_to_pose.html) — orientation 송신 추가(현재 position만 보내고 있음. teleop 시 손 회전 정보가 retargeting 필수)
+- [scripts/test_pose_only_ws.py](../scripts/test_pose_only_ws.py) — `PoseStore` → `BridgePoseStore` 발전. multiprocessing.Array 변수명을 [televuer.py:138-173](../xr_teleoperate/teleop/televuer/src/televuer/televuer.py#L138-L173)과 100% 일치시킴. TeleVuer가 노출하는 모든 property (`head_pose`, `left_arm_pose`, `left_hand_positions`, `left_hand_orientations`, `left_hand_pinch`, `*_pinchValue`, ...)를 동일 시그니처로 구현. `render_to_xr(frame)`은 noop(또는 향후 옵션 B2로 발전 시 ws binary 송신 진입점). 100-200줄 추가
+- 새 파일: `scripts/run_teleop_ws.py` — [run_teleop.py](../scripts/run_teleop.py)와 같은 wrapper 패턴. 차이는 `_apply_http_monkey_patch` 대신 **`_inject_bridge_pose_provider`**: TeleVuerWrapper 생성 시 `tvuer` 키워드를 우리 BridgePoseStore로 monkey-patch. cwd 변경 + sanity check 동일
+- [webxr_to_pose.html](../assets/webxr_to_pose.html) — orientation 송신 추가(현재 position만 보내고 있음. teleop 시 손 회전 정보가 retargeting 필수)
 
 **unitree 측 코드 변경**:
 - `xr_teleoperate` (`teleop_hand_and_arm.py` 포함): **0줄 직접 수정**. wrapper의 monkey-patch로 진입 (run_teleop.py의 `_apply_http_monkey_patch` 패턴과 동일)
@@ -190,7 +190,7 @@ PC docker
 
 **변경 위치 / 양**:
 - 옵션 A의 변경사항 전부 + 다음
-- [webxr_to_pose.html](../setup/webxr_to_pose.html) — WebRTC peer 코드 추가 (~150-200줄):
+- [webxr_to_pose.html](../assets/webxr_to_pose.html) — WebRTC peer 코드 추가 (~150-200줄):
   - 카메라별 RTCPeerConnection 생성(`addTransceiver('video', {direction:'recvonly'})`)
   - `https://<img_server_ip>:<port>/offer` POST + answer 처리
   - `pc.ontrack` → off-screen `<video>` element + `play()`
@@ -246,8 +246,8 @@ Sim host: image_server.py ZMQ port 55555 (변경 없음, ZMQ 그대로)
 
 **변경 위치 / 양**:
 - 옵션 A 위에 다음:
-- [setup/test_pose_only_ws.py](../setup/test_pose_only_ws.py) — `ImageClient` 호출 + ws send binary frame (~100줄)
-- [webxr_to_pose.html](../setup/webxr_to_pose.html) — `ws.onmessage`에서 binary 분기 + `createImageBitmap` + texImage2D (~80줄)
+- [scripts/test_pose_only_ws.py](../scripts/test_pose_only_ws.py) — `ImageClient` 호출 + ws send binary frame (~100줄)
+- [webxr_to_pose.html](../assets/webxr_to_pose.html) — `ws.onmessage`에서 binary 분기 + `createImageBitmap` + texImage2D (~80줄)
 
 **unitree 측 코드 변경**:
 - `xr_teleoperate`: **0줄**
@@ -280,7 +280,7 @@ xrSession.requestAnimationFrame 기반 publish로 패치
 ```
 
 **변경 위치 / 양**:
-- `/usr/local/lib/python3.10/dist-packages/vuer/client_build/assets/chunks/chunk-Dd3xtWba.js`(또는 동등 chunk) — minified bundle 직접 string 치환 + setup/install.sh에서 자동 적용
+- `/usr/local/lib/python3.10/dist-packages/vuer/client_build/assets/chunks/chunk-Dd3xtWba.js`(또는 동등 chunk) — minified bundle 직접 string 치환 + scripts/install.sh에서 자동 적용
 - 패치 대상: Hands 컴포넌트의 `useInterval(J, 1e3/a)` 호출을 자체 `xrSession.requestAnimationFrame` 기반으로 교체 + Camera 컴포넌트도 동일
 - 또는 vuer 0.0.60을 fork해서 동일 수정 후 wheel build
 
@@ -341,11 +341,11 @@ xrSession.requestAnimationFrame 기반 publish로 패치
 ### 3.2 단계별 구현 로드맵
 
 **Step 1.1 — BridgePoseStore (옵션 A)**
-- `setup/test_pose_only_ws.py`의 `PoseStore`를 multiprocessing.Array 기반으로 발전. 변수명/property를 `TeleVuer`(televuer.py:138-173 + property accessor) 100% 동일 시그니처. 새 클래스명: `BridgePoseStore` 또는 `WSPoseTeleVuer` (의미 명확)
+- `scripts/test_pose_only_ws.py`의 `PoseStore`를 multiprocessing.Array 기반으로 발전. 변수명/property를 `TeleVuer`(televuer.py:138-173 + property accessor) 100% 동일 시그니처. 새 클래스명: `BridgePoseStore` 또는 `WSPoseTeleVuer` (의미 명확)
 - orientation도 추가 (현재 position만) — `left_hand_orientation_shared` (25*9 float, 3x3 rotation matrix flattened column-major)
 
 **Step 1.2 — run_teleop_ws.py wrapper**
-- [setup/run_teleop.py](../setup/run_teleop.py) fork
+- [scripts/run_teleop.py](../scripts/run_teleop.py) fork
 - `_apply_http_monkey_patch` 제거(vuer 안 씀)
 - 신규 `_inject_bridge_pose_provider`: `televuer.tv_wrapper.TeleVuer`를 monkey-patch해 우리 BridgePoseStore 반환하도록(또는 직접 `TeleVuerWrapper.__init__`을 patch해서 `self.tvuer = our_bridge` inject)
 - `_patch_image_spawn_retry` 제거 (영상 미통합)
@@ -377,7 +377,7 @@ xrSession.requestAnimationFrame 기반 publish로 패치
 - WebGL 측에서 같은 texture를 좌/우 viewport에 다른 UV로 그림 (XR view 0=left, 1=right)
 
 **Step 2.4 — adb reverse 자동화**
-- `setup/run_teleop_ws.py`에 `adb reverse tcp:8013 + tcp:60001 (+ 60002 + 60003)` 자동 호출(또는 README에 명시)
+- `scripts/run_teleop_ws.py`에 `adb reverse tcp:8013 + tcp:60001 (+ 60002 + 60003)` 자동 호출(또는 README에 명시)
 
 **Step 2.5 — Gate 4 sanity (Week 6)**
 - UR10e+DG-5F sim과 함께 영상 + pose 통합 teleop 검증
@@ -452,10 +452,10 @@ xrSession.requestAnimationFrame 기반 publish로 패치
 
 | 파일 | 상태 | 변경 |
 |---|---|---|
-| [setup/test_pose_only_ws.py](../setup/test_pose_only_ws.py) | 수정 | PoseStore → BridgePoseStore(multiprocessing.Array, TeleVuer mimick) |
-| [setup/webxr_to_pose.html](../setup/webxr_to_pose.html) | 수정 | orientation 송신 + WebRTC peer + WebGL video plane |
-| `setup/run_teleop_ws.py` | 신규 | run_teleop.py 패턴 + BridgePoseStore inject monkey-patch |
-| [setup/README.md](../setup/README.md) | 수정 | Step I 신규: Galaxy XR ws bridge teleop 절차 |
+| [scripts/test_pose_only_ws.py](../scripts/test_pose_only_ws.py) | 수정 | PoseStore → BridgePoseStore(multiprocessing.Array, TeleVuer mimick) |
+| [assets/webxr_to_pose.html](../assets/webxr_to_pose.html) | 수정 | orientation 송신 + WebRTC peer + WebGL video plane |
+| `scripts/run_teleop_ws.py` | 신규 | run_teleop.py 패턴 + BridgePoseStore inject monkey-patch |
+| [README.md](../README.md) | 수정 | Step I 신규: Galaxy XR ws bridge teleop 절차 |
 | [docs/xr_teleoperate_setup_issues.md](xr_teleoperate_setup_issues.md) | 수정 | §1.12 Galaxy XR vuer freeze + ws bridge 처방 |
 
 ### 4.3 TeleVuer interface mimick 변수명 매핑표
@@ -490,7 +490,7 @@ pinch/squeeze는 WebXR 표준에 직접 없으므로 client 측에서 thumb-tip 
 | `teleimager` | **0줄** | **0줄** | **0줄** (image_client 재활용) | 0줄 |
 | `vuer` (client_build) | **0줄** | **0줄** | **0줄** | **수십~수백 줄 minified 패치** |
 
-→ **옵션 A/B1/B2 모두 unitree 측 직접 코드 수정 없음** (전부 우리 setup/ 폴더의 wrapper + monkey-patch). 옵션 C만 깊은 패치 필요.
+→ **옵션 A/B1/B2 모두 unitree 측 직접 코드 수정 없음** (전부 우리 scripts/ 폴더의 wrapper + monkey-patch). 옵션 C만 깊은 패치 필요.
 
 옵션 A/B1/B2의 trade-off는 변경량이 아닌 **"vuer 우회 범위 + 영상 처리 방식 + 작업량"**:
 

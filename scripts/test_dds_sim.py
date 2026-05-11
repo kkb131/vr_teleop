@@ -9,8 +9,8 @@ INTEGRATION_FOR_XR_TELEOPERATE.md §8의 세 가지 verification을 한 번에 �
 전제: sim host에서 sim_main.py가 이미 돌고 있어야 함.
 
 Usage:
-  source setup/dds_env.sh        # ROS_DOMAIN_ID=1 + cyclonedds 강제
-  python3 setup/test_dds_sim.py  # 모든 단계 자동 실행
+  source scripts/dds_env.sh        # ROS_DOMAIN_ID=1 + cyclonedds 강제
+  python3 scripts/test_dds_sim.py  # 모든 단계 자동 실행
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def check_env() -> int:
     if rmw == "rmw_cyclonedds_cpp":
         ok(f"RMW_IMPLEMENTATION={rmw}")
     else:
-        warn(f"RMW_IMPLEMENTATION={rmw or '(unset)'} — 'rmw_cyclonedds_cpp' 권장. source setup/dds_env.sh")
+        warn(f"RMW_IMPLEMENTATION={rmw or '(unset)'} — 'rmw_cyclonedds_cpp' 권장. source scripts/dds_env.sh")
     if domain == str(DEFAULT_DOMAIN):
         ok(f"ROS_DOMAIN_ID={domain}")
     else:
@@ -176,7 +176,7 @@ def main() -> int:
         fail(f"{n_pass}/{n_total} 단계 통과")
         print("\n  다음 액션:")
         print("    - sim 실행 중인지: ps aux | grep sim_main.py")
-        print("    - DDS env: source setup/dds_env.sh")
+        print("    - DDS env: source scripts/dds_env.sh")
         print("    - 다른 host로 sim이 옮겨갔다면 cyclonedds.xml로 unicast peers 설정 (INTEGRATION §2)")
         return 1
 

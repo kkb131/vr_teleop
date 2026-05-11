@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """vuer 우회 ws bridge — pose-only 검증.
 
-BridgePoseStore 라이브러리(setup/bridge_pose_store.py)를 thin script 로 래핑.
+BridgePoseStore 라이브러리(scripts/bridge_pose_store.py)를 thin script 로 래핑.
 BridgePoseStore 가 자체 aiohttp ws server (port 8013) + HTTP static 서빙 +
 shared array 운영을 모두 담당하므로 이 스크립트는 단지:
 - BridgePoseStore 인스턴스 생성 (TeleVuer 와 같은 인자)
 - smoke (1Hz 로그) 또는 measure (N초 자동 측정 + 보고서 append) 모드 실행
 
-본 스크립트는 standalone pose 검증용. 실제 teleop 통합은 setup/run_teleop_ws.py
+본 스크립트는 standalone pose 검증용. 실제 teleop 통합은 scripts/run_teleop_ws.py
 가 BridgePoseStore 를 monkey-patch 로 inject (televuer.TeleVuer 자리에).
 
 Usage:
   # PC측
   adb reverse tcp:8013 tcp:8013
-  python3 setup/test_pose_only_ws.py
+  python3 scripts/test_pose_only_ws.py
   # Galaxy XR Chrome → http://localhost:8013/
 
   # 측정 모드
-  python3 setup/test_pose_only_ws.py --measure 30 --report docs/galaxy_xr.md
+  python3 scripts/test_pose_only_ws.py --measure 30 --report docs/galaxy_xr.md
 """
 
 from __future__ import annotations

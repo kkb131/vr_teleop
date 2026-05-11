@@ -40,11 +40,11 @@
 
 **🎯 Gate 2 결과: 통과**
 
-Quest 3 환경에서 televuer pose 스트리밍이 ≥30Hz 안정 동작함이 확정되었습니다. **자동화된 setup/ 폴더로 다른 PC에서도 동일하게 재현 가능**하며, Galaxy XR로의 이식은 Week 7-8 통합 시점에 검증 예정. **Week 3(IsaacSim G1) 진입 가능**.
+Quest 3 환경에서 televuer pose 스트리밍이 ≥30Hz 안정 동작함이 확정되었습니다. **자동화된 scripts/ 폴더로 다른 PC에서도 동일하게 재현 가능**하며, Galaxy XR로의 이식은 Week 7-8 통합 시점에 검증 예정. **Week 3(IsaacSim G1) 진입 가능**.
 
 ### 2.2 산출물 목록
 
-- **다른 PC 재현용 setup 폴더** (`src/xr_teleop/setup/`):
+- **다른 PC 재현용 setup 폴더** (`src/xr_teleop/scripts/`):
   - `README.md` — Step A(ADB) ~ Step G(televuer 검증) 한국어 가이드
   - `environment.yml` — conda env `tv` 정의 (python=3.10 / pinocchio=3.1.0 / numpy=1.26.4)
   - `install.sh` — clone + 서브모듈 + televuer/teleimager pip install + params-proto<3 핀 + cert 생성
@@ -183,7 +183,7 @@ vuer 부팅 시 출력되는 메시지 `Visit: https://vuer.ai?grid=False`의 `v
 - **본 PC (Docker, Claude 작업 환경)**: 코드 수정, install.sh smoke test, test_pose_only.py monkey-patch 검증
 - **헤드셋 PC (Quest 3)**: Galaxy XR/Quest 3 USB 연결, adb reverse, 실제 측정
 
-setup/ 폴더는 둘 다에서 동일하게 동작 (단, conda env vs system pip 차이만 있음).
+scripts/ 폴더는 둘 다에서 동일하게 동작 (단, conda env vs system pip 차이만 있음).
 
 ---
 
@@ -252,23 +252,23 @@ source ~/.bashrc
 
 # Step D: conda env 생성
 cd src/xr_teleop
-conda env create -f setup/environment.yml
+conda env create -f scripts/environment.yml
 conda activate tv
 
 # Step E: xr_teleoperate clone + 의존성 + cert
-bash setup/install.sh
+bash scripts/install.sh
 
 # Step F: sanity check
-python3 setup/verify.py
+python3 scripts/verify.py
 
 # Step G: televuer pose-only 검증
 adb devices                          # 헤드셋 USB 연결 후
 adb reverse tcp:8012 tcp:8012        # USB 직결 통신 채널
-python3 setup/test_pose_only.py --http
+python3 scripts/test_pose_only.py --http
 # 헤드셋 Chrome → http://localhost:8012 → Enter VR
 
 # Gate 2 정량 측정
-python3 setup/test_pose_only.py --http --measure 30 --report docs/week2_report.md
+python3 scripts/test_pose_only.py --http --measure 30 --report docs/week2_report.md
 ```
 
 ### 5.2 test_pose_only.py 핵심 호출 패턴 (영상 의존성 제거)
@@ -376,16 +376,16 @@ adb reverse tcp:8012 tcp:8012
 # 4. PC에서 televuer 서버 시작 (--http 권장)
 conda activate tv  # (system pip 환경이면 생략)
 cd src/xr_teleop
-python3 setup/test_pose_only.py --http
+python3 scripts/test_pose_only.py --http
 # 5. 다른 터미널에서 connectivity 점검
-bash setup/diagnose.sh
+bash scripts/diagnose.sh
 # 6. 헤드셋 Chrome → http://localhost:8012 → Enter VR
 ```
 
-### 5.7 setup/ 폴더 구조 요약
+### 5.7 scripts/ 폴더 구조 요약
 
 ```
-src/xr_teleop/setup/
+src/xr_teleop/scripts/
 ├── README.md          # 다른 PC 재현 가이드 (Step A~G + 트러블슈팅)
 ├── environment.yml    # 공식과 동일 3 패키지 (python/pinocchio/numpy)
 ├── install.sh         # clone + 서브모듈 + pip + cert 생성 (idempotent)
@@ -402,7 +402,7 @@ src/xr_teleop/setup/
 **Gate 2 통과**. xr_teleoperate 측 데이터 흐름 핵심 부분이 다른 PC에서도 재현 가능하도록 자동화되었고, Quest 3에서 head/wrist/hand pose가 192 Hz로 안정 스트리밍됨이 확정되었습니다.
 
 검증된 핵심 사항:
-- conda env + install.sh + cert + plain HTTP 우회까지 한 번에 끝나는 setup/ 폴더
+- conda env + install.sh + cert + plain HTTP 우회까지 한 번에 끝나는 scripts/ 폴더
 - televuer가 영상 의존성 없이 pose-only 모드로 동작 가능 (pass-through + zmq=False + webrtc=False)
 - Galaxy XR Chrome strict cert 정책에 대한 plain HTTP fallback (`--http` + vuer cert=None monkey-patch)
 - Lost frames per field가 false-positive 방지의 핵심 정량 지표 — Hz/NaN만 보면 안 됨

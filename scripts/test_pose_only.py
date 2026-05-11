@@ -10,16 +10,16 @@
 
 Usage:
   # 1) Smoke 모드 (기본) — 1Hz 로그로 NaN/Hz/좌표 모니터링, Ctrl+C 종료
-  python3 setup/test_pose_only.py
+  python3 scripts/test_pose_only.py
 
   # 2) Measure 모드 — N초간 자동 측정 후 종료, Gate 2 보고용 표 출력
-  python3 setup/test_pose_only.py --measure 30
+  python3 scripts/test_pose_only.py --measure 30
 
   # 3) Measure + 보고서 append
-  python3 setup/test_pose_only.py --measure 30 --report docs/week2_report.md
+  python3 scripts/test_pose_only.py --measure 30 --report docs/week2_report.md
 
 전제조건:
-  - bash setup/gen_certs.sh  (cert.pem/key.pem in ~/.config/xr_teleoperate/)
+  - bash scripts/gen_certs.sh  (cert.pem/key.pem in ~/.config/xr_teleoperate/)
   - adb reverse tcp:8012 tcp:8012
   - Galaxy XR Chrome → https://localhost:8012/?ws=wss://localhost:8012 + Enter VR
 """
@@ -69,7 +69,7 @@ try:
     from televuer import TeleVuer
 except ImportError as e:
     print(f"[ERR] cannot import televuer: {e}")
-    print("       먼저 'bash setup/install.sh' 수행 후 재시도")
+    print("       먼저 'bash scripts/install.sh' 수행 후 재시도")
     sys.exit(1)
 
 

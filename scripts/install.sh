@@ -10,9 +10,9 @@
 #    (teleop_hand_and_arm.py가 'from pinocchio import casadi' 강제)
 #
 # Usage:
-#   conda env에서:  conda activate tv && bash setup/install.sh    ← Week 3+ 권장
-#   Docker에서:     bash setup/install.sh                          (system pip — Week 2까지만)
-#   Week 5 진입:    INSTALL_DEX_RETARGETING=1 bash setup/install.sh
+#   conda env에서:  conda activate tv && bash scripts/install.sh    ← Week 3+ 권장
+#   Docker에서:     bash scripts/install.sh                          (system pip — Week 2까지만)
+#   Week 5 진입:    INSTALL_DEX_RETARGETING=1 bash scripts/install.sh
 
 set -euo pipefail
 
@@ -99,11 +99,11 @@ fi
 if [ -x "$SCRIPT_DIR/gen_certs.sh" ]; then
   echo "[install] running gen_certs.sh..."
   bash "$SCRIPT_DIR/gen_certs.sh" || \
-    echo "[install] WARN: gen_certs.sh failed — bash setup/gen_certs.sh 수동 실행 필요"
+    echo "[install] WARN: gen_certs.sh failed — bash scripts/gen_certs.sh 수동 실행 필요"
 fi
 
 echo ""
 echo "[OK] install complete. Next:"
-echo "     python3 setup/verify.py"
-echo "     python3 setup/test_pose_only.py --http   # Galaxy XR 연결 후 (HTTP 권장)"
-echo "     bash setup/diagnose.sh                   # connectivity 점검 (서버 실행 중일 때)"
+echo "     python3 scripts/verify.py"
+echo "     python3 scripts/test_pose_only.py --http   # Galaxy XR 연결 후 (HTTP 권장)"
+echo "     bash scripts/diagnose.sh                   # connectivity 점검 (서버 실행 중일 때)"

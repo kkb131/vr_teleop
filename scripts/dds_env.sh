@@ -2,7 +2,7 @@
 # xr_teleoperate ↔ unitree_sim_isaaclab DDS 통신용 환경 변수.
 #
 # Usage:
-#   source setup/dds_env.sh    # 현재 셸에 적용 (한 번 source만 하면 됨)
+#   source scripts/dds_env.sh    # 현재 셸에 적용 (한 번 source만 하면 됨)
 #
 # Sim host 측 sim_main.py가 ChannelFactoryInitialize(1)로 도메인 1을 강제하므로
 # xr_teleoperate 측도 같은 도메인을 써야 멀티캐스트 discovery가 매치됨.

@@ -2,7 +2,7 @@
 """xr_teleoperate 환경 sanity check.
 
 설치 완료 후 실행:
-    python3 setup/verify.py
+    python3 scripts/verify.py
 
 - 필수 모듈 import 확인
 - numpy <2 보장 (pinocchio ABI 호환성)

@@ -1,12 +1,12 @@
 # run_teleop.py 분석 — wrapper의 역할과 sim 실행 흐름
 
-> Phase 1에서 작성한 [setup/run_teleop.py](../setup/run_teleop.py)가 upstream의 [xr_teleoperate/teleop/teleop_hand_and_arm.py](../xr_teleoperate/teleop/teleop_hand_and_arm.py)를 어떻게 wrap하는지, 그리고 IsaacSim G1+Dex3 sim 환경에서 실제로 어떤 함수들이 호출되는지 정리.
+> Phase 1에서 작성한 [scripts/run_teleop.py](../scripts/run_teleop.py)가 upstream의 [xr_teleoperate/teleop/teleop_hand_and_arm.py](../xr_teleoperate/teleop/teleop_hand_and_arm.py)를 어떻게 wrap하는지, 그리고 IsaacSim G1+Dex3 sim 환경에서 실제로 어떤 함수들이 호출되는지 정리.
 
 ---
 
 ## 0. 한 줄 요약
 
-`run_teleop.py`는 upstream `teleop_hand_and_arm.py`를 **그대로 실행하되 그 앞뒤에 5가지 wrapping을 끼워 넣는** 216줄짜리 부팅 스크립트다. upstream 코드는 한 줄도 수정하지 않고, **import 직전 monkey-patch 5종 + cwd 보정 + sanity check + sim 친화 default**로 우리 환경(Quest 3 / Galaxy XR + USB-only + IsaacSim 별도 docker)에 맞춤. USB-C 유선 통신은 wrapper가 직접 처리하는 게 아니라, **wrapper가 cert 우회(HTTP 모드)** + **`setup/README.md`의 `adb reverse` 안내**로 USB-only 환경이 동작 가능하게 한 것이다.
+`run_teleop.py`는 upstream `teleop_hand_and_arm.py`를 **그대로 실행하되 그 앞뒤에 5가지 wrapping을 끼워 넣는** 216줄짜리 부팅 스크립트다. upstream 코드는 한 줄도 수정하지 않고, **import 직전 monkey-patch 5종 + cwd 보정 + sanity check + sim 친화 default**로 우리 환경(Quest 3 / Galaxy XR + USB-only + IsaacSim 별도 docker)에 맞춤. USB-C 유선 통신은 wrapper가 직접 처리하는 게 아니라, **wrapper가 cert 우회(HTTP 모드)** + **`README.md`의 `adb reverse` 안내**로 USB-only 환경이 동작 가능하게 한 것이다.
 
 ---
 
@@ -20,7 +20,7 @@
 | 2 | `--img-server-ip` default `192.168.123.164` (Unitree 로봇 IP) | 우리는 같은 host의 다른 docker에서 sim이 도므로 `localhost` | `_ensure_sim_defaults()` — `--img-server-ip localhost` 자동 삽입 (cert 신뢰 host와 일치하도록) |
 | 3 | 영상 spawn func이 ws disconnect race에 무방비 — 첫 ws가 짧게 끊기면 `AssertionError: Websocket session is missing`으로 영상 plane 영영 미등록 | Quest 3 기본 브라우저에서 자주 trigger됨 | `_patch_image_spawn_retry()` — 8개 spawn method를 try/except로 감싸 20회 retry |
 | 4 | 시스템 Python 또는 ROS Humble pinocchio로 import 시도 | ROS pinocchio엔 casadi backend 없어 즉시 ImportError | `_sanity_check()` — conda env tv 활성/casadi/dex_retargeting을 boot 직후 확인, fail-fast |
-| 5 | upstream을 `cd teleop && python teleop_hand_and_arm.py` 가정 — `../assets/g1/...` cwd-relative path | 우리는 `python setup/run_teleop.py`로 다른 cwd에서 실행 → URDF load 실패 | `os.chdir(teleop_path.parent)` — runpy 호출 직전 cwd 이동 |
+| 5 | upstream을 `cd teleop && python teleop_hand_and_arm.py` 가정 — `../assets/g1/...` cwd-relative path | 우리는 `python scripts/run_teleop.py`로 다른 cwd에서 실행 → URDF load 실패 | `os.chdir(teleop_path.parent)` — runpy 호출 직전 cwd 이동 |
 
 5번을 제외한 1~4번은 모두 monkey-patch + argparse 변환으로 처리. **upstream 코드는 1줄도 수정 안 함**.
 
@@ -28,7 +28,7 @@
 
 ## 2. wrapper가 추가/변경한 핵심 기능 5종
 
-### 2.1 `_apply_http_monkey_patch()` ([run_teleop.py:43-56](../setup/run_teleop.py#L43-L56))
+### 2.1 `_apply_http_monkey_patch()` ([run_teleop.py:43-56](../scripts/run_teleop.py#L43-L56))
 
 ```python
 import televuer.televuer as _tv_mod
@@ -47,7 +47,7 @@ _tv_mod.Vuer = _PlainHTTPVuer
 - **왜 동작함**: vuer 0.0.60의 `vuer/base.py:119`에 `if not self.cert: HTTP fallback` 분기가 존재 — cert가 None이면 HTTPS 강제 부팅을 우회해 plain HTTP로 부팅.
 - **언제 적용**: `wrapper_args.http`가 True (default ON), `--upstream-help`가 아닐 때만. monkey-patch는 `runpy.run_path` 호출 전에 적용해야 효과 있음 (upstream이 import할 때 이미 교체된 클래스를 보도록).
 
-### 2.2 `_ensure_sim_defaults()` ([run_teleop.py:59-74](../setup/run_teleop.py#L59-L74))
+### 2.2 `_ensure_sim_defaults()` ([run_teleop.py:59-74](../scripts/run_teleop.py#L59-L74))
 
 ```python
 if not any(a == "--img-server-ip" or a.startswith("--img-server-ip=") for a in passthrough):
@@ -58,7 +58,7 @@ if not any(a == "--img-server-ip" or a.startswith("--img-server-ip=") for a in p
 - **왜 `localhost`**: 사용자가 Quest 3 Chrome에서 `https://localhost:60001`로 cert 신뢰한 host와 일치시키기 위함. 브라우저 cert cache는 `127.0.0.1`과 `localhost`를 다른 host로 취급. v6에서 `127.0.0.1` → `localhost` 변경 (commit `afe15c7`).
 - **upstream default와의 차이**: upstream은 `192.168.123.164` (Unitree 로봇 LAN IP). sim docker가 같은 host에 떠 있으니 의미 없음.
 
-### 2.3 `_patch_image_spawn_retry()` ([run_teleop.py:86-131](../setup/run_teleop.py#L86-L131))
+### 2.3 `_patch_image_spawn_retry()` ([run_teleop.py:86-131](../scripts/run_teleop.py#L86-L131))
 
 ```python
 def _wrap(orig_method):
@@ -84,17 +84,17 @@ for name in ("main_image_monocular_webrtc", "main_image_binocular_webrtc",
 - **왜 필요**: vuer가 ws connect 직후 즉시 `session.upsert(WebRTCVideoPlane)`를 시도하는데, Quest 3 / Galaxy XR Chrome 측 ws가 한두 번 짧게 끊기는 패턴이 흔함 → upstream은 try/except 없어서 영상 plane이 영영 client에 등록 안 됨 (vuer scene이 빈 3D 공간으로 보임).
 - **언제 적용**: default ON. `--upstream-help` 모드에선 skip. 부작용 거의 없음 — ws session이 정상이면 첫 시도에 통과.
 
-### 2.4 `_sanity_check()` ([run_teleop.py:134-165](../setup/run_teleop.py#L134-L165))
+### 2.4 `_sanity_check()` ([run_teleop.py:134-165](../scripts/run_teleop.py#L134-L165))
 
 3단계 fail-fast 점검:
 
 1. `os.environ.get("CONDA_DEFAULT_ENV") == "tv"` → 아니면 **exit 2** + 안내 ("conda activate tv 후 재시도")
 2. `import pinocchio.casadi` → 실패 시 **exit 3** + 안내 ("ROS PYTHONPATH 의심" / "환경 재구성")
-3. `import dex_retargeting` → 실패 시 **exit 4** + 안내 ("INSTALL_DEX_RETARGETING=1 bash setup/install.sh")
+3. `import dex_retargeting` → 실패 시 **exit 4** + 안내 ("INSTALL_DEX_RETARGETING=1 bash scripts/install.sh")
 
 - **왜 필요**: upstream은 깊은 import chain (pinocchio.casadi, dex_retargeting, matplotlib) 거치며, 어디 한 곳이 막히면 200줄 traceback이 쏟아져 사용자가 원인 파악하기 어려움. wrapper가 boot 직후 핵심 3개를 미리 시도해 즉시 명확한 에러로 abort.
 
-### 2.5 cwd 보정 + runpy 실행 ([run_teleop.py:200-211](../setup/run_teleop.py#L200-L211))
+### 2.5 cwd 보정 + runpy 실행 ([run_teleop.py:200-211](../scripts/run_teleop.py#L200-L211))
 
 ```python
 sys.argv = [str(teleop_path), *passthrough]
@@ -110,7 +110,7 @@ runpy.run_path(str(teleop_path), run_name="__main__")
 
 ## 3. wrapper 부팅 흐름 (`main()` 단계별)
 
-[run_teleop.py:168-212](../setup/run_teleop.py#L168-L212):
+[run_teleop.py:168-212](../scripts/run_teleop.py#L168-L212):
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -152,7 +152,7 @@ runpy.run_path(str(teleop_path), run_name="__main__")
 
 ## 4. sim 환경에서 실행되는 주요 함수 호출 sequence
 
-`python setup/run_teleop.py --ee dex3 --sim` 실행 시, 위 wrapper 단계 10번에서 `teleop_hand_and_arm.py`가 main으로 실행되며 다음 sequence가 진행된다 ([teleop_hand_and_arm.py:73-531](../xr_teleoperate/teleop/teleop_hand_and_arm.py#L73-L531)):
+`python scripts/run_teleop.py --ee dex3 --sim` 실행 시, 위 wrapper 단계 10번에서 `teleop_hand_and_arm.py`가 main으로 실행되며 다음 sequence가 진행된다 ([teleop_hand_and_arm.py:73-531](../xr_teleoperate/teleop/teleop_hand_and_arm.py#L73-L531)):
 
 ### 4.1 부팅 phase (`__main__` 진입 ~ "Press [r] to start" 대기)
 
@@ -252,11 +252,11 @@ runpy.run_path(str(teleop_path), run_name="__main__")
 
 | Layer | 위치 | 역할 |
 |---|---|---|
-| **USB 데이터 채널** | 외부 명령 `adb reverse tcp:8012 tcp:8012` 등 | Android의 ADB UsbFfs 채널을 통해 헤드셋 → PC localhost로 TCP 포워딩. `setup/README.md` Step A/G에서 안내 |
+| **USB 데이터 채널** | 외부 명령 `adb reverse tcp:8012 tcp:8012` 등 | Android의 ADB UsbFfs 채널을 통해 헤드셋 → PC localhost로 TCP 포워딩. `README.md` Step A/G에서 안내 |
 | **vuer 서버 부팅 (HTTP)** | `_apply_http_monkey_patch()` | self-signed cert 신뢰 단계 우회 — Galaxy XR Chrome / Quest 3 기본 브라우저가 cert를 안 받아도 동작 |
 | **vuer client 영상 endpoint host 일치** | `_ensure_sim_defaults()` (`localhost` 강제) | webrtc_url이 `https://localhost:60001/offer`로 만들어져 cert 신뢰 host와 일치 |
 | **ws race recovery** | `_patch_image_spawn_retry()` | 헤드셋 측 첫 ws가 짧게 끊겨도 영상 plane 등록 retry |
-| **연결 진단** | `setup/diagnose.sh` | adb / cert / port LISTEN / HTTPS handshake 5단계 점검 |
+| **연결 진단** | `scripts/diagnose.sh` | adb / cert / port LISTEN / HTTPS handshake 5단계 점검 |
 
 즉 USB-only 환경에서 **연결을 가능하게 만들어준 것**은 위 5계층의 협업이며, run_teleop.py wrapper는 이 중 **vuer 부팅 단계에서 cert를 우회하고 영상 endpoint를 재배선**하는 부분을 담당한다. ADB 자체는 OS-level utility로, wrapper 외부에서 별도 명령으로 매번 설정.
 
@@ -266,8 +266,8 @@ runpy.run_path(str(teleop_path), run_name="__main__")
 
 ```
 $ conda activate tv
-$ source setup/dds_env.sh
-$ python setup/run_teleop.py --ee dex3 --sim
+$ source scripts/dds_env.sh
+$ python scripts/run_teleop.py --ee dex3 --sim
         │
         ▼
    run_teleop.main()
@@ -348,8 +348,8 @@ $ python setup/run_teleop.py --ee dex3 --sim
 
 ## 참조
 
-- [setup/run_teleop.py](../setup/run_teleop.py) — wrapper 본체 (216 줄)
-- [setup/README.md](../setup/README.md) — Step A-H 환경/실행 가이드
+- [scripts/run_teleop.py](../scripts/run_teleop.py) — wrapper 본체 (216 줄)
+- [README.md](../README.md) — Step A-H 환경/실행 가이드
 - [xr_teleoperate/teleop/teleop_hand_and_arm.py](../xr_teleoperate/teleop/teleop_hand_and_arm.py) — upstream 메인 진입점 (531 줄)
 - [xr_teleoperate/teleop/televuer/src/televuer/televuer.py](../xr_teleoperate/teleop/televuer/src/televuer/televuer.py) — TeleVuer 클래스 (864 줄)
 - [xr_teleoperate/teleop/robot_control/robot_arm_ik.py](../xr_teleoperate/teleop/robot_control/robot_arm_ik.py) — G1_29_ArmIK 등 (1251 줄)

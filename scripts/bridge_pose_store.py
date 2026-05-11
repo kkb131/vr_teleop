@@ -206,7 +206,8 @@ class BridgePoseStore:
             await asyncio.sleep(3600)
 
     async def _index_handler(self, _request: web.Request) -> web.FileResponse:
-        p = Path(__file__).parent / "webxr_to_pose.html"
+        # scripts/bridge_pose_store.py → ../assets/webxr_to_pose.html
+        p = Path(__file__).resolve().parent.parent / "assets" / "webxr_to_pose.html"
         if not p.exists():
             return web.Response(status=404, text=f"missing {p}")
         return web.FileResponse(p)

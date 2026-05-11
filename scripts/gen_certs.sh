@@ -10,8 +10,8 @@
 #   $XDG_CONFIG_HOME/xr_teleoperate/key.pem
 #
 # Usage:
-#   bash setup/gen_certs.sh           # 이미 있으면 skip (idempotent)
-#   bash setup/gen_certs.sh --force   # 만료 등으로 재생성
+#   bash scripts/gen_certs.sh           # 이미 있으면 skip (idempotent)
+#   bash scripts/gen_certs.sh --force   # 만료 등으로 재생성
 
 set -euo pipefail
 
@@ -20,7 +20,7 @@ mkdir -p "$CONF_DIR"
 
 FORCE="${1:-}"
 if [ -f "$CONF_DIR/cert.pem" ] && [ -f "$CONF_DIR/key.pem" ] && [ "$FORCE" != "--force" ]; then
-  echo "[certs] $CONF_DIR/cert.pem 이미 존재 → 재생성하려면: bash setup/gen_certs.sh --force"
+  echo "[certs] $CONF_DIR/cert.pem 이미 존재 → 재생성하려면: bash scripts/gen_certs.sh --force"
   exit 0
 fi
 

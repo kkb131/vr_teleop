@@ -1,7 +1,7 @@
 # Galaxy XR용 WS 브리지 — Vuer 우회 구조 정리
 
 > **대상**: [communication_protocols_guide.md](communication_protocols_guide.md)를 읽은 사람
-> **목적**: 왜 Galaxy XR에서 Vuer를 못 쓰고 [test_pose_only_ws.py](../setup/test_pose_only_ws.py)를 새로 만들었는지, 그리고 두 구조의 차이가 뭔지 정리
+> **목적**: 왜 Galaxy XR에서 Vuer를 못 쓰고 [test_pose_only_ws.py](../scripts/test_pose_only_ws.py)를 새로 만들었는지, 그리고 두 구조의 차이가 뭔지 정리
 
 ---
 
@@ -9,7 +9,7 @@
 
 | 구분           | 기존 Vuer 기반                         | 새로 만든 WS 브리지                    |
 |----------------|----------------------------------------|----------------------------------------|
-| 파일           | [test_pose_only.py](../setup/test_pose_only.py) | [test_pose_only_ws.py](../setup/test_pose_only_ws.py) + [webxr_to_pose.html](../setup/webxr_to_pose.html) |
+| 파일           | [test_pose_only.py](../scripts/test_pose_only.py) | [test_pose_only_ws.py](../scripts/test_pose_only_ws.py) + [webxr_to_pose.html](../assets/webxr_to_pose.html) |
 | VR쪽 코드      | Vuer가 자동 생성한 React/Three.js 페이지 | 직접 짠 200줄짜리 HTML + WebXR 코드   |
 | PC쪽 서버      | Vuer 프레임워크 (TeleVuer가 wrap)      | aiohttp + plain WebSocket             |
 | 데이터 전송    | Vuer 자체 프로토콜 (이벤트 객체)       | JSON 메시지 (직접 정의)               |
@@ -42,7 +42,7 @@
 
 ### Galaxy XR에서 발생한 증상
 
-[test_pose_only.py](../setup/test_pose_only.py)의 `--debug` 모드 (159-169 line의 monkey-patch)로 카운터를 찍어보니:
+[test_pose_only.py](../scripts/test_pose_only.py)의 `--debug` 모드 (159-169 line의 monkey-patch)로 카운터를 찍어보니:
 
 - `on_cam_move` 호출: **immersive 진입 후 7회만**
 - `on_hand_move` 호출: **2회만**
@@ -54,7 +54,7 @@
 
 ### 검증: WebXR 자체는 살아 있다
 
-[webxr_check.html](../setup/webxr_check.html) (Vuer 없이 순수 WebXR API만 사용하는 진단 페이지)로 같은 헤드셋에서 테스트해보니 — **30Hz로 끊김 없이 동작**. 즉:
+[webxr_check.html](../assets/webxr_check.html) (Vuer 없이 순수 WebXR API만 사용하는 진단 페이지)로 같은 헤드셋에서 테스트해보니 — **30Hz로 끊김 없이 동작**. 즉:
 
 - WebXR 표준 자체는 Galaxy XR Chrome에서 정상
 - Vuer 0.0.60의 React 클라이언트가 Galaxy XR Chrome 환경에서만 죽음
@@ -70,7 +70,7 @@
 
 | Vuer가 해주던 일                              | 우리가 대체한 방법                              |
 |-----------------------------------------------|-------------------------------------------------|
-| React 페이지를 자동 생성                      | [webxr_to_pose.html](../setup/webxr_to_pose.html) 직접 작성 (258줄) |
+| React 페이지를 자동 생성                      | [webxr_to_pose.html](../assets/webxr_to_pose.html) 직접 작성 (258줄) |
 | WebXR API 호출 + 프레임 루프                  | `xrSession.requestAnimationFrame(onFrame)` 직접 호출 |
 | 손/머리 자세를 Vuer 프로토콜로 직렬화         | JSON 메시지로 직접 직렬화 (`{type:'head', matrix:[...]}`) |
 | Three.js 씬 렌더링                            | **생략** (검은 화면만 클리어)                   |
@@ -196,7 +196,7 @@
 8. [측정 또는 smoke 출력]
 ```
 
-**핵심**: 4단계의 네트워크 hop만 **WebSocket → aiohttp** 로 단순화됐을 뿐, 5단계 이후의 NumPy 배열 형태는 [test_pose_only.py](../setup/test_pose_only.py)와 100% 동일하다. 이는 의도된 설계다.
+**핵심**: 4단계의 네트워크 hop만 **WebSocket → aiohttp** 로 단순화됐을 뿐, 5단계 이후의 NumPy 배열 형태는 [test_pose_only.py](../scripts/test_pose_only.py)와 100% 동일하다. 이는 의도된 설계다.
 
 ---
 
@@ -235,8 +235,8 @@ shape도, 의미도 동일. 이름만 짧게 줄였다.
 ```bash
 # 1. PC측
 adb reverse tcp:8013 tcp:8013                           # USB 포트포워딩
-python3 setup/test_pose_only_ws.py                      # smoke 모드
-python3 setup/test_pose_only_ws.py --measure 30 \
+python3 scripts/test_pose_only_ws.py                      # smoke 모드
+python3 scripts/test_pose_only_ws.py --measure 30 \
         --report docs/galaxy_xr.md                      # 30초 측정 + 보고서
 
 # 2. Galaxy XR 헤드셋
