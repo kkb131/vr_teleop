@@ -215,7 +215,8 @@ function _disconnectWebRTC() {
 
 // ── WebGL render resources (video → head-locked plane) ─────────────────
 let shaderProgram = null;
-let attrPos = -1, attrUv = -1, uniformProj = null, uniformTex = null;
+let attrPos = -1, attrUv = -1;
+let uniformProj = null, uniformView = null, uniformModel = null, uniformTex = null;
 let quadBuffer = null;
 let videoTexture = null;
 let videoTexW = 0, videoTexH = 0;
@@ -223,13 +224,21 @@ let videoTexW = 0, videoTexH = 0;
 function _initRenderResources() {
   if (shaderProgram) return;
 
+  // a_pos: head-local 좌표 (head pose 의 원점 기준, -z = 정면). u_model = head pose
+  // matrix → world 좌표. u_view = inverse(view.transform) → eye 좌표. u_proj 는
+  // per-eye off-axis frustum 포함. 세 matrix 모두 곱해야 양 눈에서 mono plane 이
+  // 동일한 world-space depth (PLANE_D) 로 fuse 됨 — view matrix 생략 시 IPD 보정이
+  // 어긋나 brain fusion 에 미세한 stereo disparity 가 생긴다 (Galaxy XR 에서 양 눈
+  // 동시 시청 시 어색하게 느껴졌던 문제).
   const vsSrc = `#version 300 es
 in vec3 a_pos;
 in vec2 a_uv;
 uniform mat4 u_proj;
+uniform mat4 u_view;
+uniform mat4 u_model;
 out vec2 v_uv;
 void main() {
-  gl_Position = u_proj * vec4(a_pos, 1.0);
+  gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1.0);
   v_uv = a_uv;
 }`;
   const fsSrc = `#version 300 es
@@ -259,14 +268,18 @@ void main() {
   if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
     liveLog('program link error: ' + gl.getProgramInfoLog(shaderProgram));
   }
-  attrPos     = gl.getAttribLocation(shaderProgram, 'a_pos');
-  attrUv      = gl.getAttribLocation(shaderProgram, 'a_uv');
-  uniformProj = gl.getUniformLocation(shaderProgram, 'u_proj');
-  uniformTex  = gl.getUniformLocation(shaderProgram, 'u_tex');
+  attrPos      = gl.getAttribLocation(shaderProgram, 'a_pos');
+  attrUv       = gl.getAttribLocation(shaderProgram, 'a_uv');
+  uniformProj  = gl.getUniformLocation(shaderProgram, 'u_proj');
+  uniformView  = gl.getUniformLocation(shaderProgram, 'u_view');
+  uniformModel = gl.getUniformLocation(shaderProgram, 'u_model');
+  uniformTex   = gl.getUniformLocation(shaderProgram, 'u_tex');
 
   // head-locked plane: config 의 PLANE_D / PLANE_W / PLANE_H 적용.
   // PLANE_W/H 는 plane 전체 폭/높이 → ±W/2, ±H/2 로 quad 생성.
-  // camera space: view matrix 곱 안 함 → 양 눈에서 같은 위치라 head-attached.
+  // head-local 좌표: 머리 정면 -z 방향으로 PLANE_D m. 매 frame u_model = head pose
+  // 로 world 좌표 변환 → 양 눈에서 같은 world plane 을 자기 시점에서 본다 (proper
+  // stereo fusion).
   const D = -PLANE_D;
   const W = PLANE_W / 2, H = PLANE_H / 2;
   const verts = new Float32Array([
@@ -290,7 +303,7 @@ void main() {
   liveLog('webgl render resources initialized');
 }
 
-function _drawVideoPlane(view) {
+function _drawVideoPlane(view, modelMatrix) {
   if (!videoEl || videoEl.readyState < 2) return;  // HAVE_CURRENT_DATA
   _initRenderResources();
 
@@ -304,7 +317,9 @@ function _drawVideoPlane(view) {
   }
 
   gl.useProgram(shaderProgram);
-  gl.uniformMatrix4fv(uniformProj, false, view.projectionMatrix);
+  gl.uniformMatrix4fv(uniformProj,  false, view.projectionMatrix);
+  gl.uniformMatrix4fv(uniformView,  false, view.transform.inverse.matrix);
+  gl.uniformMatrix4fv(uniformModel, false, modelMatrix);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, videoTexture);
   gl.uniform1i(uniformTex, 0);
@@ -396,12 +411,14 @@ function onFrame(time, frame) {
     const m = viewerPose.transform.matrix;
     wsSend({ type: 'head', ts: time, matrix: Array.from(m) });
 
-    // head-locked video plane: 각 view 의 projection matrix 만 사용 (view matrix
-    // 곱 안 함 → camera space 에 고정, 양 눈에서 같은 위치 → head-attached)
+    // head-locked video plane: u_model = head pose matrix (head → world),
+    // u_view = inverse(view.transform) (world → eye), u_proj = per-eye off-axis
+    // frustum. 세 matrix 모두 적용해야 양 눈이 같은 world plane 을 자기 시점에서
+    // 봐서 stereo fusion 이 자연스럽다.
     for (const view of viewerPose.views) {
       const vp = layer.getViewport(view);
       gl.viewport(vp.x, vp.y, vp.width, vp.height);
-      _drawVideoPlane(view);
+      _drawVideoPlane(view, m);
     }
   }
 
