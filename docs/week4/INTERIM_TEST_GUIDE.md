@@ -230,6 +230,30 @@ Quest 3 Chrome:
 옵션:
 - `--scale 1.5` — position scale factor (default 1.0 = 1:1). rotation 은 항상 1:1.
 
+### 4.5 Galaxy XR 변형 (`run_teleop_ur10e_ws.py`)
+
+vuer 0.0.60 client React 가 Galaxy XR Chrome 에서 immersive 진입 후 publish freeze 되는 문제로, vuer 의존 우회한 self-hosted ws bridge (`scripts/bridge_pose_store.py` + `assets/webxr_to_pose.html`) 패턴 사용.
+
+```bash
+# Quest 3 entry 와 동일한 sim/conda/DDS 사전 조건 + 추가 port:
+adb reverse tcp:8013 tcp:8013       # ws bridge (Quest 3 의 8012 vuer 대체)
+adb reverse tcp:60001 tcp:60001     # head camera (optional)
+adb reverse tcp:60003 tcp:60003     # right_wrist camera (optional)
+
+python /workspaces/tamp_ws/src/xr_teleop/scripts/run_teleop_ur10e_ws.py
+```
+
+Galaxy XR 측:
+1. Chrome 에서 `http://localhost:8013/` 접속 → ws bridge HTML 페이지 로드
+2. Enter VR/AR 버튼 클릭 → 손 들이밀기
+3. Terminal 2 `r` 키 → sync 시작
+
+Quest 3 entry 와 차이:
+- `--port 8013` (vuer 8012 대신 ws bridge port — `XR_BRIDGE_PORT` env var 자동 설정)
+- vuer cert / spawn retry monkey-patch 없음
+- `BridgePoseStore` 를 televuer 세 namespace 에 monkey-patch (run_teleop_ws.py 패턴)
+- 키 매핑 (r/p/c/q), `--scale`, relative motion + DG-5F frame transform 모두 동일
+
 ### 5.3 Gate 4 통과 기준 (요약)
 
 | # | 항목 | 기준 |
