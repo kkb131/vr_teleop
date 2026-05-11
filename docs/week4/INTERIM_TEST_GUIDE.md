@@ -133,9 +133,53 @@ DDS instantiate (sim 연결) 정확도는 Unit 5 e2e 단계에서. 상세: [day3
 
 teleop entry (Unit 4) 추가 후 sim 연결 가능. Controllers 는 instantiate 단계에서 DDS subscribe 대기로 hang — sim docker 부팅 후 동작.
 
-## Unit 4: teleop_hand_and_arm.py 통합 (대기)
+## Unit 4: run_teleop_ur10e.py — teleop entry (✅ 2026-05-11)
 
-(작업 진행 시 추가)
+### 4.1 무엇이 추가됐나
+
+- [scripts/run_teleop_ur10e.py](../../scripts/run_teleop_ur10e.py) — UR10e + DG-5F 전용 teleop entry. upstream 무수정 (별도 entry script).
+
+### 4.2 검증 명령
+
+**Smoke (sim 없이)**:
+```bash
+conda activate tv && unset PYTHONPATH
+python /workspaces/tamp_ws/src/xr_teleop/scripts/run_teleop_ur10e.py --help
+```
+
+argparse + import path + sanity check 통과 확인.
+
+**실 연결 (Unit 5)**:
+```bash
+# Terminal 1 (sim docker):
+cd /workspace/isaaclab/datasets/unitree_sim_isaaclab
+./custom/scripts/run_ur10e_dg5f.sh --headless
+
+# Terminal 2 (xr_teleop docker):
+conda activate tv && source /workspaces/tamp_ws/src/xr_teleop/scripts/dds_env.sh && unset PYTHONPATH
+# Quest 3 USB-C 연결 후:
+adb reverse tcp:8012 tcp:8012
+adb reverse tcp:60001 tcp:60001
+adb reverse tcp:60003 tcp:60003
+python /workspaces/tamp_ws/src/xr_teleop/scripts/run_teleop_ur10e.py
+```
+
+Quest 3:
+1. Chrome 으로 `https://localhost:60001` 접속 → cert 신뢰 (head camera)
+2. `https://localhost:60003` 접속 → cert 신뢰 (right_wrist camera)
+3. `http://localhost:8012` 접속 → "Enter VR" → 손 들이밀기
+4. Terminal 2 에서 `r` 키 → sync 시작
+
+### 4.3 알려진 한계 (Unit 5 에서 처리)
+
+- WebXR ↔ UR10e base frame 좌표 align (현재 미적용 — Quest 3 floor-frame 그대로 IK)
+- DG-5F retargeting magnitude underdetermined (Unit 1 한계)
+
+상세: [day4_integration_spike.md](day4_integration_spike.md) §"알려진 한계".
+
+### 4.4 종료
+
+Terminal 2 에서 `q` 키 또는 Ctrl+C. `arm_ctrl.ctrl_dual_arm_go_home()` 으로 init pose 복귀 후 종료.
 
 ## Unit 5: End-to-end Quest 3 → sim (대기)
 
