@@ -1,8 +1,9 @@
-# Week 3 개발 결과 보고서
+# Week 3 개발 결과 보고서 — Galaxy XR 본기 기준
 
 **프로젝트**: xr_teleoperate 기반 Galaxy XR + UR10e + DG-5F 원격조종 시스템
 **기간**: Phase 1, Week 3
-**목적**: IsaacSim G1+Dex3-1 + Quest 3 hand tracking 통합 검증 (Gate 3) — xr_teleoperate 업스트림 stack 전체가 우리 환경에서 동작함을 확인
+**대상 헤드셋**: Samsung Galaxy XR (SM-I610, Android XR Chrome)
+**목적**: Galaxy XR + IsaacSim G1+Dex3-1 + hand tracking + WebRTC 영상까지 end-to-end teleop 검증 (Gate 3)
 
 ---
 
@@ -11,17 +12,17 @@
 12주 개발 계획의 **Phase 1 - Week 3** 단계로, 다음 사항을 검증하는 것이 목표였습니다.
 
 - 같은 host의 별도 docker container에서 돌고 있는 `unitree_sim_isaaclab` (G1+Dex3-1)에 우리 docker가 CycloneDDS로 붙는지 확인
-- xr_teleoperate 업스트림의 `teleop_hand_and_arm.py`를 우리 환경에서 boot해 IsaacSim 안의 G1+Dex3-1을 hand tracking으로 조종 가능한지 (**Gate 3**)
-- 다른 PC에서 재현 가능하도록 scripts/ 폴더를 conda env / wrapper 단위로 보강
-- 발견된 호환성 이슈를 모두 자동 처리하는 wrapper(run_teleop.py) 완성
+- xr_teleoperate 업스트림의 `teleop_hand_and_arm.py`를 **Galaxy XR 본기**로 boot 해 IsaacSim 안의 G1+Dex3-1을 hand tracking으로 조종 가능한지 (**Gate 3**)
+- 다른 PC에서 재현 가능하도록 `scripts/` + `assets/` 폴더 자동화
+- Galaxy XR Chrome 환경에서 발견되는 호환성 이슈를 모두 처리하는 wrapper 완성
 
-> Gate 3 통과 시 → Week 4(UR10e URDF + IK 교체)로 Phase 2 진입
-> Gate 3 실패 시 → DDS / 의존성 / cert / vuer race 등 분기별 처방
+> Gate 3 통과 시 → Week 4 (UR10e URDF + IK 교체)로 Phase 2 진입
+> Gate 3 실패 시 → DDS / vuer client / WebRTC 분기별 처방
 
 본 주차 통합 환경:
 - **xr_teleoperate side**: 본 docker (Ubuntu 24.04 host 위 Ubuntu 22.04 container, ROS Humble + cuMotion stack), conda env `tv`
 - **sim host side**: 같은 물리 host의 별도 docker (`unitree_sim_isaaclab` + Isaac Sim 5.1.0 + Isaac Lab 0.46.6 + conda env `unitree_sim_env` Python 3.11)
-- **헤드셋**: Meta Quest 3 (Galaxy XR 본기 검증은 Week 7-8 이월)
+- **헤드셋**: Samsung Galaxy XR 본기. USB-only(`adb reverse`) 통신, WiFi 없음 (Quest 3는 Week 2까지 sanity 용도로만 사용)
 - 두 docker 모두 `--network=host` → CycloneDDS multicast 자동 동작
 
 ---
@@ -32,39 +33,47 @@
 
 | 검증 항목 | 결과 | 비고 |
 |---|---|---|
-| INTEGRATION §8.A: DDS LowState subscribe (~94 Hz) | ✅ 성공 | 93.0 Hz / 279 msgs in 3s 수신 |
+| INTEGRATION §8.A: DDS LowState subscribe (~94 Hz) | ✅ 성공 | 93.0 Hz / 279 msgs in 3s |
 | INTEGRATION §8.B: ZMQ camera frame (head/L/R) | ✅ 성공 | 3개 카메라 모두 응답 (74KB / 43KB / 43KB) |
 | INTEGRATION §8.C: passive LowCmd round-trip | ✅ 성공 | 50 msgs publish, sim 콘솔 에러 없음 |
-| conda env `tv` 자동 생성 + pinocchio.casadi backend 정상 | ✅ 성공 | activate hook으로 ROS PYTHONPATH 자동 unset |
-| `teleop_hand_and_arm.py --ee dex3 --sim` boot 통과 | ✅ 성공 | 메인 루프 진입 ('Press [r] to start syncing') |
-| Quest 3 hand tracking → IsaacSim G1+Dex3-1 동작 | ✅ 성공 | 사용자 실측 — hand sync 자연스럽게 따라감 |
-| **VR scene 안 head_camera 영상 plane 표시** | ✅ 성공 | spawn retry monkey-patch 적용 후 |
-| **Gate 3 통과** | ✅ **통과** | Phase 1 완료 → Week 4 진입 가능 |
+| conda env `tv` + pinocchio.casadi backend | ✅ 성공 | activate hook 으로 ROS PYTHONPATH 자동 unset |
+| Galaxy XR Chrome WebXR API 자체 검증 (webxr_check.html) | ✅ 성공 | navigator.xr / immersive-vr / -ar / hand-tracking required 모두 OK, 손 2개 wrist 좌표 OK |
+| **vuer 0.0.60 client publish (Galaxy XR immersive)** | ❌ **실패** | 30초간 cam=7 hand=2 → **>99% event loss** (R3F XR-RAF 전환 stall 추정) |
+| 자체 ws bridge — pose-only (`test_pose_only_ws.py` + `webxr_to_pose.html`) | ✅ 성공 | head/LW/RW/LH/RH 모두 OK + msg/s ≥ 30, hand_pos 손 움직임에 따라 변동 |
+| 옵션 A — BridgePoseStore + `run_teleop_ws.py` 통합 | ✅ 성공 | TeleVuer 인터페이스 100% mimick, teleop_hand_and_arm.py 변경 0줄. G1+Dex3 sync 자연스러움 |
+| 옵션 B1 — WebRTC peer + WebGL plane + pass-through | ✅ 성공 | immersive-ar 진입 시 실세계 + viewer 앞 1m head_camera plane |
+| `scripts/config.yaml` 단일 source (Python + HTML 양쪽 참조) | ✅ 성공 | 무선 환경 대비 host/port 한 곳에서 변경 가능 |
+| **Gate 3 통과 (Galaxy XR 본기)** | ✅ **통과** | Phase 1 완료 → Week 4 진입 가능 |
 
-**🎯 Gate 3 결과: 통과**
+**🎯 Gate 3 결과: 통과 (Galaxy XR 본기 기준)**
 
-xr_teleoperate 업스트림 stack 전체 (vuer pose stream + televuer wrapper + Pinocchio IK + Unitree DDS + IsaacSim G1+Dex3-1)가 우리 환경에서 end-to-end 동작 확정. **Week 4 (UR10e URDF + IK 교체)로 진입**.
+xr_teleoperate 업스트림 stack 그대로는 Galaxy XR Chrome 에서 vuer client publish freeze 로 동작 불가 — 자체 ws bridge + WebRTC peer 영상 통합으로 우회. **unitree 측 코드(xr_teleoperate / televuer / teleimager) 변경 0 줄**로 G1+Dex3 sim teleop end-to-end 동작 확정. **Week 4 (UR10e URDF + IK 교체)** 진입 가능.
 
 ### 2.2 산출물 목록
 
-- **신규 파일** (다른 PC 재현용):
-  - `scripts/dds_env.sh` — `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `ROS_DOMAIN_ID=1` 한 곳
-  - `scripts/test_dds_sim.py` — INTEGRATION §8 자동화 (LowState subscribe + 3 ZMQ camera + LowCmd round-trip + 색상 OK/WARN/FAIL)
-  - `scripts/run_teleop.py` — `teleop_hand_and_arm.py` wrapper:
-    * `_sanity_check()`: conda env `tv` 활성화 / pinocchio.casadi / dex_retargeting 사전 확인 + fail-fast
-    * `_apply_http_monkey_patch()`: vuer cert/key를 None으로 강제 (Week 2 v3 기법, plain HTTP 부팅)
-    * `_patch_image_spawn_retry()`: `main_image_*_webrtc/zmq` spawn func 8개를 monkey-patch — `AssertionError: Websocket session is missing` 시 0.5초 sleep 후 20회 재시도
-    * `_ensure_sim_defaults()`: `--img-server-ip localhost` 자동 삽입 (cert 신뢰 host 일치)
-    * cwd를 `xr_teleoperate/teleop/`로 변경 (robot_arm_ik.py의 `../assets/g1/...` 상대 경로 대응)
-- **수정 파일**:
-  - `scripts/environment.yml` — `pip` 패키지 명시 추가
-  - `scripts/install.sh` — `python3 -m pip` 강제, requirements.txt + vuer[all]==0.0.60 명시 설치, INSTALL_DEX_RETARGETING opt-in
-  - `README.md` — Step H 신규 (T1-T6: dds_env / test_dds_sim / run_teleop / Quest 3 / VR webrtc / controller 모드)
-- **conda env `tv` activate hook**:
-  - `/root/miniconda3/envs/tv/etc/conda/activate.d/clear_pythonpath.sh` — ROS PYTHONPATH 자동 unset
-  - `/root/miniconda3/envs/tv/etc/conda/deactivate.d/restore_pythonpath.sh` — deactivate 시 복원
-- **새로 받은 외부 자료**:
-  - `docs/INTEGRATION_FOR_XR_TELEOPERATE.md` — sim host 측 환경 / DDS topic / 검증 절차 명세 (사용자 작성, 277 lines)
+**신규 (다른 PC 재현용)**:
+- `scripts/dds_env.sh` — `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `ROS_DOMAIN_ID=1`
+- `scripts/test_dds_sim.py` — INTEGRATION §8 자동화 (3 단계 색상 OK/WARN/FAIL)
+- `scripts/run_teleop.py` — vuer 경로 teleop_hand_and_arm.py wrapper (Week 2 v3 패턴 + 영상 spawn retry)
+- `scripts/bridge_pose_store.py` — **TeleVuer interface 100% mimick + 자체 aiohttp ws server**. multiprocessing.Array shared variables + 모든 property + render_to_xr/close + Singleton
+- `scripts/run_teleop_ws.py` — Galaxy XR ws bridge 통합 wrapper. TeleVuer 클래스를 3 군데(`televuer.televuer`, `televuer.tv_wrapper`, `televuer` 패키지) 동시 monkey-patch
+- `scripts/test_pose_only_ws.py` — BridgePoseStore standalone 검증 (smoke/measure)
+- `scripts/config.yaml` — ws port / WebRTC host&port / plane 크기·거리 단일 source
+- `assets/webxr_check.html` — vuer 무관 WebXR API 자체 진단 페이지 (visibility + setInterval + RAF throttle 카운터 포함)
+- `assets/webxr_to_pose.html` — XR-RAF onFrame 기반 pose ws send + WebRTC peer + WebGL video plane + pass-through (alpha=0 clear). config fetch + URL 쿼리 override 지원
+
+**수정**:
+- `scripts/environment.yml` / `scripts/install.sh` — `python -m pip` 강제, requirements.txt + vuer[all]==0.0.60 명시, INSTALL_DEX_RETARGETING opt-in
+- `README.md` (root 이동) — Step H~I 신규 (DDS env / IsaacSim 통합 / Galaxy XR ws bridge 절차)
+- `.gitignore` — `__pycache__/` 등 추가
+
+**conda env `tv` activate hook** (이전 Week 3 작업 그대로):
+- `…/etc/conda/activate.d/clear_pythonpath.sh` — ROS PYTHONPATH 자동 unset
+- `…/etc/conda/deactivate.d/restore_pythonpath.sh` — 복원
+
+**문서**:
+- `docs/galaxy_xr_ws_bridge_integration.md` — 통합 옵션(A/B1/B2/C/D) 분석 + 우선순위 + vuer freeze 진단 trace 부록
+- `docs/run_teleop_internals.md` — wrapper 내부 단계 별 사양
 
 ---
 
@@ -72,126 +81,166 @@ xr_teleoperate 업스트림 stack 전체 (vuer pose stream + televuer wrapper + 
 
 ### 3.1 Day 1 — DDS 통신 verification
 
-본 docker에서 INTEGRATION §8의 3가지 verification을 수동으로 확인.
+본 docker 에서 INTEGRATION §8 의 3 가지 검증 수동 수행.
 
-**(a) Docker network 모드 확인**
-```
-hostname → ys-MS-7D75
-hostname -I → 211.221.73.41 192.168.0.10 172.17.0.1 ...
-```
-host network namespace 공유 확정 (docker bridge가 아니라 host 인터페이스 그대로 보임).
+- **Docker network**: `hostname -I` 로 host 인터페이스 그대로 보임 → `--network=host` namespace 공유 확정
+- **DDS env**: `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` + `ROS_DOMAIN_ID=1` (sim `ChannelFactoryInitialize(1)` 와 일치)
+- **§8.A LowState subscribe**: 93 Hz / 279 msgs in 3s — sim RobotState publisher 약 94 Hz 정상
+- **§8.B ZMQ camera**: head(55555) 74KB, left_wrist(55556) 43KB, right_wrist(55557) 43KB
+- **§8.C passive LowCmd**: 50 회 publish, sim 콘솔 에러 없음
 
-**(b) DDS 환경**
-```bash
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_DOMAIN_ID=1
-```
-sim의 sim_main.py가 `ChannelFactoryInitialize(1)`로 도메인 1을 강제하므로 동일 도메인 필요.
-
-**(c) §8.A LowState subscribe**: 93 Hz / 279 msgs in 3s — sim의 RobotState publisher가 약 94Hz로 publish 중 정상 확인.
-
-**(d) §8.B ZMQ camera**: head(55555) 74KB, left_wrist(55556) 43KB, right_wrist(55557) 43KB 모두 응답.
-
-**(e) §8.C passive LowCmd**: 50회 publish 정상, sim 콘솔에 에러 없음.
-
-→ 통신 기반 검증 완료. INTEGRATION 문서 §1의 host network mode + Section §2의 DDS 설정이 모두 정상 동작.
+→ 통신 기반 검증 완료. INTEGRATION §1 host network + §2 DDS 설정 정상.
 
 ### 3.2 Day 2 — 자동화 스크립트
 
-Day 1을 매번 수동 명령으로 돌리지 않도록 자동화:
+`scripts/dds_env.sh` + `scripts/test_dds_sim.py` (자동 진단) + `README.md` Step H 신규. `python scripts/test_dds_sim.py` 한 줄로 3/3 단계 통과 확인.
 
-**(a) `scripts/dds_env.sh`** — RMW + ROS_DOMAIN_ID 한 곳에서 export. 매 작업 시작 전 `source scripts/dds_env.sh`.
+### 3.3 Day 3 — `run_teleop.py` wrapper + conda env `tv`
 
-**(b) `scripts/test_dds_sim.py`** — INTEGRATION §8을 한 번에 실행하는 진단 스크립트. step 0 환경 변수 / A LowState / B ZMQ 3대 / C round-trip 모두 점검 + 색상 OK/WARN/FAIL + 요약 + 다음 액션 제안. 옵션: `--skip-cameras`, `--skip-lowcmd`, `--lowstate-duration N`.
+xr_teleoperate 업스트림 `teleop_hand_and_arm.py` 를 우리 환경에서 boot 하기 위한 wrapper:
 
-**(c) `README.md` Step H 신규** — Step A~G 다음에 IsaacSim 통합 절차 (T1 dds_env → T2 test_dds_sim → T3 run_teleop → T4 Quest 3 hand teleop → T5 VR 영상 → T6 controller 모드).
+- **cert 강제 우회**: `televuer.televuer.Vuer` 를 cert/key=None subclass 로 monkey-patch → plain HTTP
+- **cwd 변경**: `robot_arm_ik.py` 의 `../assets/g1/...` cwd-relative 경로 대응
+- **`--img-server-ip localhost` default 자동 삽입**: webrtc_url cert host mismatch 회피 (Week 3 v6 fix)
+- **sanity check fail-fast**: conda env `tv` / `pinocchio.casadi` / `dex_retargeting` 사전 import 실패 시 즉시 abort
 
-→ 결과: `python scripts/test_dds_sim.py` 한 줄로 3/3 단계 통과 확인.
+`pinocchio.casadi`가 ROS Humble system 패키지에 없어 conda env `tv` 도입. activate hook 으로 PYTHONPATH 자동 unset. `python scripts/run_teleop.py --ee dex3 --sim` 이 메인 루프 진입(`Press [r] to start syncing`).
 
-### 3.3 Day 3 — `teleop_hand_and_arm.py` wrapper 작성
+이 시점까지 Quest 3 로 hand sync 정상 확인됨 (Week 2 결과 재확인, sanity 용도).
 
-xr_teleoperate 업스트림의 `teleop/teleop_hand_and_arm.py`를 우리 환경에서 그대로 boot하기 위해 `scripts/run_teleop.py` wrapper 작성.
+### 3.4 Day 4 — Galaxy XR 본기 첫 시도, vuer publish freeze 발견
 
-**(a) cert 강제 우회 (Week 2 v3 기법 답습)**
-- teleop_hand_and_arm.py가 `TeleVuerWrapper`를 통해 vuer를 부팅하는데 vuer는 cert/key 강제 → Quest 3 brower의 cert 신뢰 비용. Week 2의 monkey-patch (cert=None → plain HTTP fallback)를 동일하게 적용:
-```python
-class _PlainHTTPVuer(_OrigVuer):
-    def __init__(self, *args, **kwargs):
-        kwargs["cert"] = None; kwargs["key"] = None
-        super().__init__(*args, **kwargs)
-_tv_mod.Vuer = _PlainHTTPVuer
+`scripts/run_teleop.py --ee dex3 --sim` 으로 Galaxy XR Chrome 에서 `http://localhost:8012` 접속.
+
+증상:
+- vuer page 로드 OK, "socket reconnect" 버튼 동작, pass-through 버튼 표시 (화면 아래에 위치해 처음엔 못 봤음 — Enter VR 버튼은 노출 안 됨)
+- pass-through 클릭 후 immersive 진입은 성공
+- **pose 출력 시 head 만 OK, LW/RW/LH/RH 는 `..` (lost)**
+- `--debug --measure 30` 결과: `cam=7 hand=2 errors=0` → **30 Hz × 30 s = 900 expected 대비 >99 % event loss**
+- 매 시도마다 `hand_pos[0]` 이 `[-0.10, +0.07, -0.21]` 처럼 frozen, 값은 다름 (publish 가 1~2 회만 일어나고 그 뒤로 stop)
+
+ws disconnect 메시지가 거의 없음 → server-side close 가 아닌 **client-side publish freeze**.
+
+### 3.5 Day 5 — 가설 분류 + 자체 진단 페이지 (`webxr_check.html`)
+
+vuer 무관 자체 WebXR 진단 페이지를 작성해 Galaxy XR Chrome 의 표준 API 상태를 분리 검증. 결과:
+
+| 가설 | 검증 도구 | 결과 |
+|---|---|---|
+| Chrome flags / WebXR API 미지원 | webxr_check.html auto diagnostic | `navigator.xr` 정상, immersive-vr / -ar 둘 다 supported |
+| hand-tracking 미지원 | required feature 강제 진입 | session 진입 성공, 손 2개 + wrist 좌표 정상 |
+| `document.hidden` 가드 | visibility monitor 추가 | immersive 도중 `hidden=false` 유지 (가설 기각) |
+| `xrSession.visibilityState` 가드 | XR session visibility 모니터 | `visible` 유지 (가설 기각) |
+| setInterval throttle | 33ms setInterval 카운터 + RAF 카운터 | **setInt=30/s 정상**, raf=0/s (immersive 안 normal RAF 멈춤은 표준 동작) → setInterval throttle 가설 기각 |
+
+추가로 vuer `client_build/assets/chunks/chunk-Dd3xtWba.js` 의 source map 을 활용해 minified `Hands` 컴포넌트 복원:
+
+```js
+function Hands({ disableLeft: o = !1, disableRight: l = !1, stream: g = !1, ... }) {
+  const { sendMsg: S } = useSocket();
+  const b = useXR(({ mode: Y }) => Y);   // store mode
+  const D = b === "immersive-ar" || b === "immersive-vr";
+  const G = useMemo(() => ({}), []);      // mutable hand pose buffer
+  useFrame((_, __, V) => { if (!D) return;
+                           /* getHandLandmarks → G.left/right */ });
+  const J = useCallback(() => {
+    D && (!g || o && l || S({ ts: Date.now(), etype: "HAND_MOVE", value: { ...G } }));
+  }, [D, g, o, l, G]);
+  return useInterval(J, 1e3 / a), ...;
+}
 ```
 
-**(b) cwd 변경**
-- `robot_arm_ik.py`가 G1 URDF를 `../assets/g1/g1_body29_hand14.urdf` 상대 경로로 로드 → 사용자가 어느 디렉토리에서 실행하든 `xr_teleoperate/teleop/`에서 돌도록 가정. 우리는 `scripts/`에서 wrapper 호출하므로 `os.chdir(teleop_path.parent)`로 변경.
+publish 가드 `D && (!g || o && l || S(...))` 는 `stream=true`, `disableLeft=false`, `disableRight=false` 일 때 정상 호출되어야 함. `useInterval` 도 단순 `setInterval(callback, 1e3/a)` 기반(자체 구현 확인됨). 그러나 `useFrame` 은 R3F frame loop 의존.
 
-**(c) `--img-server-ip` default 자동 삽입**
-- 같은 host 다른 docker = sim image server가 localhost. 사용자 명시 안 하면 wrapper가 `--img-server-ip localhost`를 자동 삽입. (초기엔 `127.0.0.1`이었으나 v6에서 `localhost`로 변경 — webrtc_url cert host mismatch 회피)
+**남은 유력 가설**: vuer 0.0.60 의 R3F `<Canvas>` 가 immersive 진입 시 `gl.xr.setSession(session)` 후 `setAnimationLoop` 을 XR-RAF 로 transition 해야 정상이지만, Galaxy XR Chrome 에서 이 transition 이 stall → `useFrame` 멈춤 → `G` 빈 채로 유지 + zustand store 갱신 stale → callback 거의 호출 안 됨. minified bundle 직접 패치 (옵션 C) 는 비용 매우 크고 vuer 업그레이드 마다 재적용 필요 → **자체 ws bridge 로 우회 결정**.
 
-**(d) sys.argv 정리**
-- vuer 임포트 시 params_proto가 sys.argv를 가로채 우리 wrapper 옵션이 가려짐 → argparse 먼저 수행 후 `sys.argv = sys.argv[:1]`로 비우기.
+### 3.6 Day 6 — Step C: vuer 우회 ws bridge 1 차 (pose only)
 
-**(e) runpy 실행**
-- teleop_hand_and_arm.py가 `if __name__ == '__main__':` 가드라 `runpy.run_path(..., run_name="__main__")`로 호출.
+`scripts/test_pose_only_ws.py` + `assets/webxr_to_pose.html` 작성.
 
-→ 첫 boot 시도에서 `ImportError: cannot import name 'casadi' from 'pinocchio'` 발생. 다음 단계로.
+- `xrSession.requestAnimationFrame(onFrame)` (XR-RAF) 기반 — vuer freeze 와 무관
+- 매 frame `frame.getViewerPose(refSpace).transform.matrix` (head SE(3)) + 양손 25 joints `getJointPose().transform.{position,matrix}` 추출
+- JSON 메시지 (`{type:"head", matrix:[16]}` / `{type:"hand", handedness, wrist:[16], positions:[25×[x,y,z]]}`) 로 `ws://localhost:8013/pose` 송신
+- aiohttp ws server (`test_pose_only_ws.py`) 가 `/` HTTP 정적 서빙 + `/pose` ws receive + shared array 업데이트
+- 자동 reconnect (1초 backoff)
 
-### 3.4 Day 3 - pinocchio.casadi 이슈 → conda env tv 도입
+실측: head/LW/RW/LH/RH 모두 OK, hand_pos 가 손 움직임에 따라 변동 (`[-0.03, +0.08, -0.31]` 등 HMD 상대좌표). msg/s ≥ 30 안정.
 
-**증상**: ROS Humble system pinocchio (`/opt/ros/humble/lib/...`)는 casadi backend 없이 빌드됨. teleop_hand_and_arm.py가 `from pinocchio import casadi` 강제하므로 즉시 ImportError.
+### 3.7 Day 7 — 옵션 A: BridgePoseStore + run_teleop_ws.py
 
-**해결**: 사용자 docker에 conda env `tv`를 새로 만들어 그 안에서 conda-forge `pinocchio=3.1.0` (casadi backend 포함) 사용.
+ws bridge 패턴을 teleop_hand_and_arm.py 와 통합하기 위한 thin layer.
 
-**시행착오**:
-1. `environment.yml`에 `pip` 자체가 명시 안 되어 있어 conda env에 pip 미설치 → `python -m pip` "No module named pip" → `environment.yml`에 `pip` 추가
-2. conda activate 후에도 `which pip` → `/usr/bin/pip` (system pip) → install.sh의 모든 `pip install` 호출을 `python3 -m pip install`로 변경 (어느 PATH에서도 conda env의 pip 우선)
-3. ROS Humble PYTHONPATH가 conda env site-packages를 가림 → `/root/miniconda3/envs/tv/etc/conda/activate.d/clear_pythonpath.sh` activate hook 설치 (env 활성 시 PYTHONPATH 자동 unset, deactivate 시 복원)
-4. `install.sh`에 requirements.txt 설치 단계 누락 (matplotlib 등) → §1b/§1c 추가
-5. `dex_retargeting` 미설치 → G1+Dex3-1 hand control은 `INSTALL_DEX_RETARGETING=1`이 필수 (이전엔 Week 5로 미뤘으나 Week 3에서도 필요해 활성)
+- **`scripts/bridge_pose_store.py`**: TeleVuer interface 100% mimick
+  - `__init__` 시그니처 동일 (vuer 관련 인자 받지만 무시)
+  - `multiprocessing.Array` shared variables (`head_pose_shared`, `left_arm_pose_shared`, `left_hand_position_shared`, `left_hand_orientation_shared`, `left_hand_pinch_shared`, ...) — TeleVuer 와 동일 layout
+  - 모든 property (`head_pose`, `left_arm_pose`, `left_hand_positions`, `left_hand_orientations`, `left_hand_pinch`, controller_*)
+  - `render_to_xr` (noop) / `close` (noop)
+  - 자체 aiohttp ws server 자동 시작 (background thread, port 8013)
+  - **Singleton 패턴** — `_inject_bridge_pose_store` 가 monkey-patch 후 TeleVuerWrapper 가 다시 instantiate 해도 같은 인스턴스 반환 (ws server 중복 시작 방지)
+- **`assets/webxr_to_pose.html` 확장**: 25 joint orientation (column-major 3x3) 송신 추가. TeleVuer `extract_hand_poses` 의 `[m[0],m[1],m[2], m[4],m[5],m[6], m[8],m[9],m[10]]` layout 그대로 맞춤
+- **pinch / squeeze 자동 계산**: BridgePoseStore 가 thumb-tip ↔ index/middle-tip 거리 기반 (vuer `getHandLandmarks` 와 동일 threshold 0.01 / 0.07)
+- **`scripts/run_teleop_ws.py`**: `run_teleop.py` 패턴 차용 + `_inject_bridge_pose_store` 신규
 
-→ `python scripts/verify.py` 통과 + `python scripts/run_teleop.py --ee dex3 --sim`이 메인 루프 진입까지 도달.
+### 3.8 Day 8 — monkey-patch 무효 fix
 
-### 3.5 Day 3 - sanity check 추가 (사용자 conda activate 누락 대응)
+run_teleop_ws.py 1차 시도에서 BridgePoseStore 가 instantiate 안 됨 (port 8013 listen 안 함). 진단:
 
-사용자가 `conda activate tv` 없이 `python scripts/run_teleop.py`를 실행 → system Python으로 떨어져 200줄 traceback. 사용자 인내 비용 큼. wrapper 시작 시점에 `_sanity_check()`로 fail-fast 안내:
-- `CONDA_DEFAULT_ENV != 'tv'` → exit 2 + `conda activate tv` 안내
-- `import pinocchio.casadi` 실패 → exit 3 + PYTHONPATH/install.sh 안내
-- `import dex_retargeting` 실패 → exit 4 + INSTALL_DEX_RETARGETING 안내
+```
+[run_teleop_ws] televuer.TeleVuer → BridgePoseStore monkey-patched   ← 출력은 나옴
+Initialize Dex3_1_Controller OK!                                       ← main 루프는 진입
+Press [r] to start syncing...
+```
+→ 그러나 8013 에 ws server 없음.
 
-### 3.6 Day 4 (v6) — VR scene 안 영상 plane 미등록 fix
+원인: Python `from X import Y` 는 import time 에 local namespace 에 `Y` 이름이 캐시되고 그 시점 원본 객체를 가리킨다. 이후 `X.Y = Other` 로 attribute 만 변경해도 **이미 import 한 곳의 local `Y` 는 안 바뀜**.
 
-**증상**: 사용자 Quest 3로 hand sync는 잘 되는데 Enter VR 후 vuer scene 안에 빈 3D 공간만, 영상 plane 미표시.
+| 파일 | line | import 패턴 | 영향 |
+|---|---|---|---|
+| `tv_wrapper.py:2` | `from .televuer import TeleVuer` | tv_wrapper 모듈에 원본 `TeleVuer` 캐시 |
+| `tv_wrapper.py:238` | `self.tvuer = TeleVuer(...)` | bare name → 캐시된 원본 호출 |
+| `televuer/__init__.py:2` | `from .televuer import TeleVuer` | 패키지 namespace 에도 원본 캐시 |
 
-**진단**:
-- `https://localhost:60001/2/3` 직접 접속 시 영상 스트림 OK (sim WebRTC server 정상)
-- PC log에 `AssertionError: Websocket session is missing` from `televuer.py:470 main_image_monocular_webrtc` + ws connect/disconnect 반복
+처방: 3 군데 모두 patch.
 
-**원인**: ws disconnect race + webrtc_url host mismatch. 두 갈래 처방:
+```python
+import televuer as _tv_pkg
+import televuer.televuer as _tv_mod
+import televuer.tv_wrapper as _wrapper_mod
+from bridge_pose_store import BridgePoseStore
+_tv_mod.TeleVuer      = BridgePoseStore
+_wrapper_mod.TeleVuer = BridgePoseStore
+_tv_pkg.TeleVuer      = BridgePoseStore
+```
 
-**(a) Step 1A — `--img-server-ip` default를 `127.0.0.1` → `localhost`로 변경**
-- vuer client의 webrtc_url이 `https://localhost:60001/offer`로 만들어져 사용자가 신뢰한 cert host와 일치 → cert 거부로 인한 ws lifecycle race trigger 제거
-- (대안 Step 1B: sim host측 image_server.py를 patch해 HTTP 모드로 영구 운영. 사용자 선택은 1A. plan에 1B는 fallback으로 보존)
+(`test_pose_only_ws.py` 가 동작했던 이유: BridgePoseStore 를 직접 호출해 monkey-patch 의존 없었음.)
 
-**(b) Step 2 — spawn func retry monkey-patch (default ON)**
-- `televuer.TeleVuer.main_image_*_webrtc/zmq` spawn func 8개를 monkey-patch
-- `AssertionError: Websocket session is missing` 발생 시 0.5초 sleep 후 20회 재시도
-- ws race가 동시 발생해도 자동 회복
+수정 후 `[BridgePoseStore] ws server ready: http://localhost:8013/` 출력 확인 + Galaxy XR Chrome 접속 OK + **IsaacSim 안 G1 팔/Dex3 손가락이 hand sync 자연스럽게 따라감**. 옵션 A 완료.
 
-→ 사용자 Quest 3 재시도에서 vuer scene 안 head 영상 plane 정상 표시 확인. **Gate 3 통과**.
+### 3.9 Day 9 — 옵션 B1: WebRTC peer + WebGL plane + pass-through
 
-**참고**: wrist 카메라(60002/60003)는 sim에서 영상 publish 중이지만 업스트림 default가 head_camera 영상만 vuer scene에 띄우도록 설계됨 (immersive first-person view 디자인). Wrist 카메라 multi-plane 표시는 12주 plan의 Week 9 (멀티카메라 통합)에서 다룸.
+영상 통합 (head_camera 만, 추후 wrist 확장):
 
-### 3.7 Day 5 — Gate 3 정성 확인
+- **WebRTC peer** (`_connectWebRTC`): `RTCPeerConnection({iceServers:[]})` + `addTransceiver('video', recvonly)` + `fetch('https://<host>:<port>/offer', POST {sdp, type})` + answer SDP `setRemoteDescription` + `pc.ontrack` 에서 `<video>.srcObject = stream` + `video.play()`. session 시작 직후 자동 connect, end 시 cleanup
+- **WebGL video plane**:
+  - WebGL 2 컨텍스트 `{ xrCompatible, alpha:true, premultipliedAlpha:false }`
+  - vertex/fragment shader (GLSL ES 3.0), quad buffer, GL_TEXTURE_2D
+  - head-locked: camera space `(0, 0, -D)` 에 plane → 양 눈에서 같은 위치 (view matrix 안 곱함)
+  - `onFrame` 안 `viewerPose.views[]` 순회 → `gl.viewport(view.viewport)` + `texImage2D(video)` + `drawArrays(TRIANGLE_STRIP, 4)`
+- **Pass-through**:
+  - `gl.clearColor(0, 0, 0, 0)` + `clear(COLOR|DEPTH)`
+  - immersive-ar 진입 시 alpha=0 background → **실세계 카메라 영상 그대로 보임** + viewer 앞 plane 에 robot head_camera 가 그려짐 → 디버깅 시 모니터/주변 직접 관찰 가능
 
-| 항목 | 결과 |
-|---|---|
-| Quest 3 hand tracking → IsaacSim G1 팔 동작 | ✅ 자연스러움 |
-| Dex3-1 손가락 retargeting | ✅ 동작 |
-| VR scene 안 head_camera 영상 표시 | ✅ 정상 |
-| 컨트롤러 입력 (`--input-mode controller` 미사용 시) | 정상적으로 무시 (default `hand`) |
-| 30Hz 안정 동작 | ✅ (sim controller 250Hz publish, hand pose ≥30Hz) |
+실측: Galaxy XR Chrome 에서 Enter AR → 실세계 + viewer 앞 1m 에 G1 head_camera 영상 + 손 자유 움직임 → IsaacSim G1+Dex3 sync 자연스러움. **end-to-end 영상+pose teleop 완성**.
 
-→ Gate 3 통과 조건 모두 충족.
+### 3.10 Day 10 — `scripts/` + `assets/` 재배치 + `config.yaml` 단일 source
+
+용도별 분리:
+- `scripts/` ← `setup/*.{py,sh,yml}` (12 파일)
+- `assets/` ← `setup/*.html` (2 파일)
+- `README.md` ← `setup/README.md` (project root 로 이동)
+- 코드/문서 내부 `setup/` reference → `scripts/` 또는 `assets/`
+
+`scripts/config.yaml` 신규 — Python (`BridgePoseStore` 가 yaml 로딩 + `/config` HTTP endpoint 로 JSON export) + HTML (`webxr_to_pose.html` 이 페이지 로드 시 `fetch('/config')` + URL 쿼리 override) 양쪽 단일 source. 무선 환경 진입 시 `webrtc.host` 한 곳만 변경 가능.
 
 ---
 
@@ -199,195 +248,150 @@ _tv_mod.Vuer = _PlainHTTPVuer
 
 ### 4.1 발생한 이슈와 해결
 
-| 이슈 | 원인 | 해결 방법 | 상태 |
+| 이슈 | 원인 | 해결 | 상태 |
 |---|---|---|---|
-| ROS Humble system pinocchio에 casadi backend 없음 | apt 패키지가 casadi 옵션 없이 빌드됨 | conda env `tv` 도입 + activate hook으로 PYTHONPATH unset | ✅ 해결 |
-| `environment.yml`에 pip 미명시 → conda env에 pip 미설치 | 단순화 시 누락 | environment.yml에 `pip` 패키지 추가 | ✅ 해결 |
-| `which pip` → /usr/bin/pip (system) (conda activate 후에도) | PATH 우선순위 / 일부 base 이미지 알리아스 | install.sh 모든 pip 호출을 `python3 -m pip`로 변경 | ✅ 해결 |
-| `ImportError: cannot import name 'casadi' from 'pinocchio'` | 위 문제와 동일 (conda env 미사용) | conda env tv 활성화 + sanity check fail-fast | ✅ 해결 |
-| matplotlib 미설치 (teleop_hand_and_arm.py import chain) | install.sh §0에 requirements.txt 단계 누락 | §1b로 `pip install -r requirements.txt` 추가 | ✅ 해결 |
-| `dex_retargeting` 미설치 → robot_hand_unitree.py import 실패 | Week 2 시점 INSTALL_DEX_RETARGETING=0 (Week 5로 미룸) | Week 3에서 `INSTALL_DEX_RETARGETING=1`로 활성 | ✅ 해결 |
-| `g1_body29_hand14.urdf does not contain valid URDF` | robot_arm_ik.py가 `../assets/g1/...` cwd-relative 경로 | wrapper에서 `os.chdir(teleop_path.parent)`로 변경 | ✅ 해결 |
-| 사용자 conda activate 누락 시 200줄 traceback | wrapper 사전 안내 없음 | `_sanity_check()`로 exit 2/3/4 명확히 분기 안내 | ✅ 해결 |
-| `AssertionError: Websocket session is missing` 반복 | webrtc_url host mismatch + ws disconnect race | (1A) `--img-server-ip` default `localhost` (2) `_patch_image_spawn_retry()` default ON | ✅ 해결 |
-| VR scene 안 빈 3D 공간만, 영상 plane 미표시 | 위와 동일 | 위와 동일 | ✅ 해결 |
+| Galaxy XR Chrome vuer client publish freeze | R3F `useFrame` 이 일반 RAF 기반, immersive 시 XR-RAF transition stall (가장 유력) | 자체 ws bridge 로 vuer client 완전 우회 (BridgePoseStore + webxr_to_pose) | ✅ |
+| vuer page에 Enter VR 안 보이고 pass-through 만 노출 | vuer XRButton 위치가 화면 아래 — 디바이스/뷰포트 차이 | 사용자 시야 스크롤 후 발견. vuer freeze 와는 별개 | ✅ |
+| document.hidden / xrSession.visibilityState 가설 기각 | 둘 다 immersive 도중 visible 유지 | 가설 폐기 + setInterval / RAF 카운터로 다음 진단 | ✅ |
+| setInterval throttle 가설 기각 | setInt=30/s 정상 fire | useFrame / R3F frame loop 가설로 전환 | ✅ |
+| BridgePoseStore monkey-patch 무효 (run_teleop_ws.py 1차) | `from .televuer import TeleVuer` 의 import-time local name 캐시 | `televuer.televuer` + `televuer.tv_wrapper` + `televuer` 패키지 3 군데 동시 patch | ✅ |
+| ROS Humble system pinocchio 에 casadi backend 없음 | apt pinocchio 빌드에 casadi 옵션 없음 | conda env `tv` + activate hook PYTHONPATH unset | ✅ |
+| `which pip` → `/usr/bin/pip` (conda activate 후에도) | PATH 우선순위 / 일부 base image alias | install.sh 모든 pip 호출을 `python -m pip` 로 강제 | ✅ |
+| `dex_retargeting` 미설치 | Week 3 시점부터 G1+Dex3 hand control 필수 | `INSTALL_DEX_RETARGETING=1` 활성 + sanity check fail-fast | ✅ |
+| WebRTC `/offer` cert 신뢰 미설정 | self-signed cert + Galaxy XR Chrome strict | 사용자가 `https://localhost:60001` 한 번 직접 방문해 cert 신뢰. webxr_to_pose 가 실패 시 안내 출력 | ✅ |
+| `webxr_to_pose.html` 의 WebRTC port 하드코딩 | 무선 환경 / 다른 카메라 추가 시 부담 | `scripts/config.yaml` + URL 쿼리 override 로 분리 | ✅ |
 
 ### 4.2 잠재 리스크
 
-**리스크 1: Galaxy XR 본기 측 미검증**
-- 본 주차 검증은 Quest 3로만 진행. Galaxy XR Chrome의 cert 정책이 더 strict한 것으로 알려져 있어 webrtc cert 신뢰 단계가 더 까다로울 수 있음
-- **대응**: Week 7-8 (실시스템 통합) 시점에 Galaxy XR 본기 PC에서 동일 setup 재현 + 측정 비교
+**리스크 1: vuer 0.0.60 의존성 일부 잔존**
+- 본 우회는 vuer client publish 경로를 안 쓰지만 `dex_retargeting` 등 다른 패키지는 여전히 의존. vuer 업그레이드 시 freeze 가 자연 해결될 가능성도 있어 정기 회귀 테스트 필요
+- **대응**: 새 vuer 릴리스 마다 `scripts/run_teleop.py` (원본 경로) 로 빠르게 sanity 비교
 
-**리스크 2: ws race retry monkey-patch 부작용**
-- `_patch_image_spawn_retry()`가 spawn func 8개 모두를 wrap. AssertionError 외 다른 예외가 발생하는 경우는 그대로 raise하지만, vuer 0.0.60의 다른 lifecycle path와 충돌 가능성
-- **대응**: 부작용 발견 시 try/except 범위를 더 좁게 (`AssertionError + "Websocket session" 문자열만`)
+**리스크 2: WebRTC self-signed cert 신뢰 절차**
+- Galaxy XR Chrome 에서 `https://localhost:60001` 등 endpoint 별로 self-signed cert 한 번 신뢰 필요. 새 setup 마다 사용자 부담
+- **대응**: `assets/webxr_to_pose.html` 의 Live log 가 fetch 실패 시 정확한 신뢰 URL 안내 출력. README Step 에 절차 명시
 
-**리스크 3: Quest 3 기본 브라우저 vs Chrome 동작 차이**
-- 우리 README는 Chrome 가정. Quest 3 기본 브라우저 (Meta Browser / Wolvic)는 cert/WebRTC 동작이 미세히 다를 수 있음. v6 fix가 Meta Browser에서 동작 확인 — Wolvic은 별도 검증 필요할 수 있음
-- **대응**: 사용자 사용 브라우저 정보 기록. 필요 시 webrtc_codec=h264 → vp8 fallback (sim 측 cam_config 변경)
+**리스크 3: 무선 환경 (조종 PC ↔ 로봇 PC WiFi) 진입 시 라우팅**
+- 현재는 same-host docker → `localhost` 동작. 무선 분리 시 헤드셋이 직접 로봇 PC IP 로 WebRTC peer 협상하려면 cert SAN 갱신 + NAT/라우팅 검토 필요
+- **대응**: docs/galaxy_xr_ws_bridge_integration.md §2 옵션 B2 (PC server image relay) 미리 정리됨 — WiFi 진입 시 그 경로 점진 전환 가능
 
-**리스크 4: Wrist 카메라가 VR scene에 미표시**
-- 업스트림 default 설계 (immersive first-person view). 데이터는 sim에서 publish 중이고 record 모드에서 HDF5에 저장은 됨. VR 안 wrist plane 추가는 별도 작업
-- **대응**: Week 9 (멀티카메라 통합)에서 자체 wrapper로 picture-in-picture 추가
+**리스크 4: WebGL video texture 성능 (Galaxy XR 미정량)**
+- 헤드셋 측 GPU 부담. 현재 head_camera 1 개 plane 은 충분히 동작했으나 wrist 2 개 추가 시 성능 영향 미지수
+- **대응**: Week 9 멀티카메라 통합 시 `gl.texImage2D` 대신 `EXT_video_texture` 또는 OffscreenCanvas 활용 검토
 
-**리스크 5: pin 2.7.0 ↔ pinocchio 3.1.0 같은 conda env 내 충돌 가능성**
-- dex_retargeting이 pin 2.7.0을 끌어옴. conda env tv 안에서는 conda-forge pinocchio 3.1이 우선이라 import는 정상 동작 확인. 단 향후 `python -m pip install` 시 dependency resolver가 다시 다운그레이드 시도할 수 있음
-- **대응**: `python -m pip install --no-deps`로 dex_retargeting 부분 옵션. 또는 pin 2.7을 hpp-fcl 등과 함께 분리 관리
+**리스크 5: BridgePoseStore Singleton + monkey-patch 의 side effect**
+- TeleVuer 클래스를 3 모듈에 patch 한 상태로 teleop_hand_and_arm.py 가 import. 만약 사용자 코드가 별도 process 에서 TeleVuer 를 import 하면 patch 영향 안 받음 → 의도된 동작이지만 디버깅 시 혼란 가능
+- **대응**: `[run_teleop_ws]` 부팅 메시지에 patch 적용 명시 + Singleton 인스턴스 정보 출력
 
-### 4.3 다음 주차로 이월되는 항목
+### 4.3 다음 주차로 이월
 
-- **Week 4**: UR10e URDF 준비 + `robot_arm_ik.py`를 UR10e용으로 수정 (G1_29_ArmIK → UR10e_ArmIK), single-arm 구조로 단순화
-- **Week 7-8**: Galaxy XR 본기에서 Week 1~3 setup 재현 검증 + 실로봇 통합
-- **Week 9**: Wrist 카메라(60002/60003) VR scene 다중 plane 표시
+- **Week 4** (Phase 2 시작): UR10e URDF 준비 + `robot_arm_ik.py` 를 UR10e 용으로 수정 (G1_29_ArmIK → UR10e_ArmIK), dual-arm → single-arm 구조 단순화
 - **Week 5**: DG-5F dex-retargeting config (`configs/tesollo_dg5f.yml`) 작성
+- **Week 6**: IsaacSim 환경을 UR10e+DG-5F 로 전환 → Gate 4
+- **Week 7-8**: 실로봇 통합 + 무선 환경 옵션 B2 (PC server image relay) 적용
+- **Week 9**: wrist 카메라 (60002 / 60003) picture-in-picture 추가
 
 ---
 
 ## 5. 작업 상세 자료 및 주요 코드
 
-### 5.1 정립된 표준 절차 (다른 PC 재현)
+### 5.1 자체 ws bridge 데이터 흐름
+
+```
+Galaxy XR Chrome (HMD)                       PC docker (조종)
+─────────────────────                         ──────────────────
+webxr_to_pose.html                            run_teleop_ws.py
+  ├─ XR-RAF onFrame loop                        ├─ sanity check
+  │    ├─ head pose (4x4)                       ├─ _inject_bridge_pose_store
+  │    └─ 양손 25 joint position/orientation    │    └─ TeleVuer = BridgePoseStore × 3 모듈
+  │       ↓ JSON over ws://:8013/pose           └─ runpy teleop_hand_and_arm.py
+  └─ WebRTC peer (head_camera)                       └─ TeleVuerWrapper
+       fetch https://:60001/offer (SDP)              │    └─ self.tvuer = BridgePoseStore()
+       ↓ video track                                  │         ├─ aiohttp ws server :8013
+       texImage2D → WebGL plane                       │         │    /  GET → webxr_to_pose.html
+       (head-locked, viewer 앞 1m)                   │         │    /pose WS  ← JSON
+       + pass-through (alpha=0 clear)                │         │    /config GET → config.yaml JSON
+                                                     │         └─ shared array (head_pose_shared 등)
+                                                     └─ IK / DDS publisher → IsaacSim G1+Dex3
+```
+
+### 5.2 BridgePoseStore TeleVuer mimick 변수명
+
+`televuer/televuer.py:138-173` 과 100% 일치:
+
+| TeleVuer 변수 (= BridgePoseStore) | 크기 | 형식 |
+|---|---|---|
+| `head_pose_shared` | 16 float | 4×4 col-major SE(3) |
+| `left_arm_pose_shared` / `right_arm_pose_shared` | 16 float each | wrist 4×4 |
+| `left_hand_position_shared` / `right_hand_position_shared` | 25×3 float | joint position |
+| `left_hand_orientation_shared` / `right_hand_orientation_shared` | 25×9 float | 3×3 col-major |
+| `*_hand_pinch_shared` / `*_hand_pinchValue_shared` | bool / float | thumb-tip ↔ index-tip 거리 기반 |
+| `*_hand_squeeze_shared` / `*_hand_squeezeValue_shared` | bool / float | thumb-tip ↔ middle-tip 거리 기반 |
+
+### 5.3 WebRTC peer + WebGL plane 핵심 (`webxr_to_pose.html`)
+
+```js
+// WebRTC offer/answer
+pc = new RTCPeerConnection({ iceServers: [] });
+pc.addTransceiver('video', { direction: 'recvonly' });
+pc.ontrack = ev => { videoEl.srcObject = ev.streams[0]; videoEl.play(); };
+const offer = await pc.createOffer();
+await pc.setLocalDescription(offer);
+const resp = await fetch(`https://${WEBRTC_HOST}:${WEBRTC_PORT}/offer`,
+  { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: 'offer' }) });
+await pc.setRemoteDescription(await resp.json());
+
+// onFrame: pass-through + head-locked plane
+gl.clearColor(0, 0, 0, 0);
+gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+for (const view of viewerPose.views) {
+  gl.viewport(...layer.getViewport(view));
+  gl.useProgram(shaderProgram);
+  gl.uniformMatrix4fv(uniformProj, false, view.projectionMatrix);  // view matrix 안 곱함
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoEl);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+```
+
+### 5.4 매 작업 시작 시 표준 절차 (Galaxy XR 본기)
 
 ```bash
-# Step A~F: Week 1/2와 동일 (ADB / udev / Miniconda / conda env / install.sh / verify.py)
-# Step G: televuer pose-only 검증 (Week 2)
-
-# === Step H: IsaacSim G1+Dex3-1 통합 (Week 3 신규) ===
-# T1: DDS env
-source scripts/dds_env.sh
-
-# T2: 통신 자동 진단 (sim host에서 sim_main.py가 돌고 있어야 함)
-python scripts/test_dds_sim.py
-# → 3/3 단계 통과 확인
-
-# T3: teleop_hand_and_arm.py wrapper 시작
-conda activate tv    # 필수 (sanity check가 fail-fast로 감시)
-adb reverse tcp:8012 tcp:8012
-adb reverse tcp:60001 tcp:60001
-adb reverse tcp:60002 tcp:60002
-adb reverse tcp:60003 tcp:60003
-python scripts/run_teleop.py --ee dex3 --sim
-# → 메인 루프 진입 ('Press [r] to start syncing')
-
-# T4: Quest 3 Chrome
-# - https://localhost:60001 / 60002 / 60003 한 번씩 cert 신뢰 (--http라도 webrtc는 https)
-# - http://localhost:8012 → Enter VR → 손 들이밀기 → r 키 → 동기화 시작
-# - 종료: q 키
-```
-
-### 5.2 핵심 monkey-patch 패턴 (run_teleop.py)
-
-```python
-import televuer.televuer as _tv_mod
-
-# v3 — vuer cert/key 강제 None (plain HTTP)
-_OrigVuer = _tv_mod.Vuer
-class _PlainHTTPVuer(_OrigVuer):
-    def __init__(self, *args, **kwargs):
-        kwargs["cert"] = None; kwargs["key"] = None
-        super().__init__(*args, **kwargs)
-_tv_mod.Vuer = _PlainHTTPVuer
-
-# v6 — image spawn func retry-on-ws-disconnect (8 methods)
-def _wrap(orig_method):
-    async def _retried(self, session):
-        for attempt in range(20):
-            try:
-                return await orig_method(self, session)
-            except AssertionError as e:
-                if "Websocket session is missing" in str(e):
-                    await asyncio.sleep(0.5)
-                    continue
-                raise
-    return _retried
-
-for name in ("main_image_monocular_webrtc", "main_image_binocular_webrtc",
-             "main_image_monocular_zmq",     "main_image_binocular_zmq",
-             "main_image_monocular_webrtc_ego", "main_image_binocular_webrtc_ego",
-             "main_image_monocular_zmq_ego",    "main_image_binocular_zmq_ego"):
-    if hasattr(_tv_mod.TeleVuer, name):
-        setattr(_tv_mod.TeleVuer, name, _wrap(getattr(_tv_mod.TeleVuer, name)))
-```
-
-### 5.3 conda env activate hook (PYTHONPATH 자동 unset)
-
-```bash
-# /root/miniconda3/envs/tv/etc/conda/activate.d/clear_pythonpath.sh
-export _TV_PYTHONPATH_BACKUP="${PYTHONPATH:-}"
-unset PYTHONPATH
-
-# /root/miniconda3/envs/tv/etc/conda/deactivate.d/restore_pythonpath.sh
-export PYTHONPATH="${_TV_PYTHONPATH_BACKUP:-}"
-unset _TV_PYTHONPATH_BACKUP
-```
-
-### 5.4 INTEGRATION §8 자동화 진단 결과 (실측)
-
-```
-══ unitree_sim_isaaclab ↔ xr_teleoperate 통신 진단 ══
-
-── 0. DDS 환경 변수 ──
-[OK]   RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-[OK]   ROS_DOMAIN_ID=1
-
-── A. DDS LowState subscribe (3s) ──
-[OK]   279 msgs (93.0 Hz, expected ~94 Hz)
-
-── B. ZMQ camera frames ──
-[OK]   head_camera @ tcp://127.0.0.1:55555: 74,021 bytes
-[OK]   left_camera @ tcp://127.0.0.1:55556: 42,740 bytes
-[OK]   right_camera @ tcp://127.0.0.1:55557: 42,642 bytes
-
-── C. passive LowCmd round-trip (50 msgs / 1s) ──
-[OK]   50 passive lowcmds published — sim 콘솔에 에러 없으면 round-trip OK
-
-── 요약 ──
-[OK]   3/3 단계 통과 — Day 3(teleop_hand_and_arm.py 실행) 진입 가능
-```
-
-### 5.5 매 작업 시작 시 표준 절차 요약
-
-```bash
-# 1. sim host docker에서 sim_main.py 시작 (사용자 측, INTEGRATION §6)
-#    conda activate unitree_sim_env && cd unitree_sim_isaaclab
-#    python sim_main.py --task Isaac-PickPlace-Cylinder-G129-Dex3-Joint \
-#      --enable_dex3_dds --robot_type g129 --device cuda:0 --enable_cameras \
-#      --livestream_type 2 --public_ip 127.0.0.1
-#    "controller started, start main loop..." 표시 확인
+# 1. sim host docker 에서 sim_main.py 시작 (사용자 측, INTEGRATION §6)
 
 # 2. xr_teleoperate side docker (본 docker)
 conda activate tv
 source scripts/dds_env.sh
-adb devices                                # 헤드셋 USB 연결 확인
-adb reverse tcp:8012 tcp:8012              # vuer
-adb reverse tcp:60001 tcp:60001            # head_camera webrtc
-adb reverse tcp:60002 tcp:60002            # left_wrist webrtc
-adb reverse tcp:60003 tcp:60003            # right_wrist webrtc
+adb devices                                # Galaxy XR USB 연결 확인
+adb reverse tcp:8013  tcp:8013             # BridgePoseStore ws
+adb reverse tcp:60001 tcp:60001            # head_camera WebRTC
+# (선택) wrist 영상까지:
+# adb reverse tcp:60002 tcp:60002 / 60003
 
 # 3. (선택) 통신 점검
 python scripts/test_dds_sim.py
 
 # 4. teleop wrapper 시작
-python scripts/run_teleop.py --ee dex3 --sim
+python scripts/run_teleop_ws.py --ee dex3 --sim
 
-# 5. Quest 3 / Galaxy XR Chrome
-#    - 첫 사용 시: https://localhost:60001 / 60002 / 60003 한 번씩 cert 신뢰
-#    - http://localhost:8012 → Enter VR → 손 들이밀기 → r 키
+# 5. Galaxy XR Chrome
+#    - 첫 사용 시: https://localhost:60001 한 번 방문 → cert 신뢰
+#    - http://localhost:8013/ → 'Enter AR' (pass-through) → 손 → r 키
 ```
 
 ---
 
 ## 6. Week 3 결론
 
-**Gate 3 통과**. xr_teleoperate 업스트림 stack 전체가 우리 환경에서 동작함이 확정되었습니다. 검증된 핵심 사항:
+**Gate 3 통과 (Galaxy XR 본기 기준)**. xr_teleoperate 업스트림 stack 자체는 Galaxy XR Chrome 에서 vuer client publish freeze 로 그대로 동작 불가했으나, 자체 ws bridge + WebRTC peer 영상 통합으로 우회 완료. 검증된 핵심 사항:
 
-- 같은 host의 별도 docker에서 돌고 있는 `unitree_sim_isaaclab` (G1+Dex3-1)에 우리 docker가 CycloneDDS multicast로 정상 연결
-- conda env `tv` (pinocchio 3.1.0 + casadi backend) + activate hook (PYTHONPATH 자동 unset)으로 ROS Humble과 격리된 안전한 환경
-- `scripts/run_teleop.py` wrapper가 cert 강제 우회 / cwd 변경 / sanity check / spawn retry / img-server-ip default 5가지 자동 처리
-- Quest 3에서 `http://localhost:8012` → Enter VR → vuer scene 안 head_camera 영상 + hand sync → IsaacSim G1+Dex3-1 동작까지 end-to-end
+- Galaxy XR Chrome WebXR API 는 표준 준수 정상 — 문제는 vuer 0.0.60 의 R3F 통합 layer
+- BridgePoseStore 가 TeleVuer interface 100% mimick 이라 `teleop_hand_and_arm.py` / `TeleVuerWrapper` 코드 변경 0 줄
+- `run_teleop_ws.py` 의 3 군데 monkey-patch 로 import-time local name 캐시까지 정확히 우회
+- WebRTC peer + WebGL head-locked plane + immersive-ar pass-through (alpha=0) 로 헤드셋 안에서 실세계 + robot view + 손 동시 관찰
+- `scripts/config.yaml` 단일 source 로 무선 환경 전환 시 host/port 한 곳만 변경 가능
 
-다른 PC 재현은 README.md Step A~H를 따라 30분~1시간 내 가능. Galaxy XR 본기 검증은 Week 7-8 통합 시점에 동일 절차로 수행.
-
-다음 주(Week 4)부터 **Phase 2 — UR10e + DG-5F 교체**로 진입합니다. Week 4는 G1 URDF/IK를 UR10e용으로 교체하고 (`G1_29_ArmIK → UR10e_ArmIK`, dual-arm → single-arm), IsaacSim 환경에서도 UR10e 모델로 전환. Gate 4(IsaacSim에서 UR10e + DG-5F 안정 teleop)는 Week 6 마무리 시점.
+다른 PC 재현은 `README.md` Step A~I 를 따라 30 분~1 시간 내 가능. **다음 주 (Week 4) 부터 Phase 2 — UR10e + DG-5F 교체 진입**.
 
 ---
 
