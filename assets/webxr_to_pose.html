@@ -185,6 +185,18 @@ async function _connectWebRTC() {
   pc.ontrack = (event) => {
     pcTrackBound = true;
     liveLog(`webrtc ontrack: kind=${event.track.kind}`);
+    // fluid motion 우선 hint — H.264 decoder 가 detail 보다 motion smoothness 를
+    // 우선. 빠른 robot 팔 motion 의 stair-stepping / blocky artifact 완화.
+    try { event.track.contentHint = 'motion'; } catch (e) {}
+    // jitter buffer 최소화 (Chromium 확장). default 100-200ms buffering 이 빠른
+    // motion 에서 "버퍼링 거리는" 느낌 + 영상 lag 의 원인. 0 으로 두면 frame 도착
+    // 즉시 재생 → smoothness 일부 손해보더라도 체감 stutter / latency 모두 감소.
+    try {
+      if (event.receiver && 'playoutDelayHint' in event.receiver) {
+        event.receiver.playoutDelayHint = 0;
+        liveLog('webrtc receiver.playoutDelayHint=0');
+      }
+    } catch (e) {}
     videoEl.srcObject = event.streams[0];
     videoEl.play().catch(e => liveLog('video.play() error: ' + e.message));
   };
