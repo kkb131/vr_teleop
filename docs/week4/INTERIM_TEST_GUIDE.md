@@ -223,7 +223,8 @@ Quest 3 Chrome:
 
 키 매핑:
 - `r` — sync 시작 + 첫 origin 캡처
-- `c` — recalibrate (현재 손 = 현재 robot 새 origin)
+- `p` — **pause/resume 토글** (resume 시 자동 recalibrate). 손 새 위치로 옮길 때 권장 (안전)
+- `c` — 즉시 recalibrate (pause 없이 — jump 가능)
 - `q` — quit
 
 옵션:

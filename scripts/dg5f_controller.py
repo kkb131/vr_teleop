@@ -30,7 +30,10 @@ import yaml
 
 from dex_retargeting import RetargetingConfig
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
-from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_
+from unitree_sdk2py.idl.default import (
+    unitree_hg_msg_dds__HandCmd_,
+    unitree_hg_msg_dds__MotorCmd_,
+)
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_, HandState_
 
 
@@ -197,13 +200,23 @@ class DG5F_Controller:
         while True:
             msg = self.state_subscriber.Read()
             if msg is not None:
-                for i in range(DG5F_Num_Motors):
+                # stock unitree_sdk2py HandState_ 는 motor_state default 7-slot 이지만
+                # sim docker 가 20-slot 으로 확장해 publish. wire format 호환 위해 동적 길이.
+                n = min(DG5F_Num_Motors, len(msg.motor_state))
+                for i in range(n):
                     self.hand_state_array[i] = msg.motor_state[i].q
             time.sleep(0.002)
 
     def _ctrl_publish(self, q_20: np.ndarray):
-        """20 joint q vector → `rt/dg5f/cmd` publish."""
+        """20 joint q vector → `rt/dg5f/cmd` publish.
+
+        stock `unitree_hg.HandCmd_` 는 Dex3 기준 motor_cmd default 7-slot. DG-5F 는
+        20 joint 필요 → CycloneDDS sequence 라 길이 확장 가능. 매 publish 시
+        motor_cmd list 를 20개 `MotorCmd_` 로 reset 후 채움 (sim docker 가 20-slot
+        IDL 로 wire format 매칭).
+        """
         msg = unitree_hg_msg_dds__HandCmd_()
+        msg.motor_cmd = [unitree_hg_msg_dds__MotorCmd_() for _ in range(DG5F_Num_Motors)]
         for i in range(DG5F_Num_Motors):
             msg.motor_cmd[i].mode = 1
             msg.motor_cmd[i].q = float(q_20[i])

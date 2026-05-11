@@ -13,15 +13,24 @@
 사용자 실측 결과:
 - ✅ Quest 3 wrist pose 값에 맞춰 UR10e 움직임
 - ❌ **로봇 초기 위치와 핸드 초기 위치 불일치 → 이상한 자세로 시작**
+- ❌ **DG5F_Controller IndexError**: `msg.motor_cmd[i].mode = 1` 에서 i=7 부터 out of range
 
 사용자 결정:
 - init pose 임시 `[2.40, -1.18, 2.06, -0.88, 2.24, 0.0]` 로 변경 (사용자가 [scripts/ur10e_arm_ik.py:37](../../scripts/ur10e_arm_ik.py#L37), [scripts/ur10e_arm_controller.py:37](../../scripts/ur10e_arm_controller.py#L37) 직접 수정). 향후 재변경 가능.
 - **Relative motion 캘리브레이션** 추가 — init pose 와 무관하게 매번 sync 시작 시점에 origin 캡처해 delta 만 robot 에 전달.
+- **Pause/resume** 키 추가 — 새 origin 캡처 워크플로우 안전화.
 
 처방 적용 (Unit 5+ 작업):
-- `run_teleop_ur10e.py` main loop 에 relative motion 패턴 적용 (Week 4 R2 한계의 정확한 처방).
-- `r` 키 sync 시작 시점 / `c` 키 (recalibrate) 시점에 origin 재캡처.
-- `--scale` argparse 추가 (default 1.0, position 만 — rotation 은 항상 1:1).
+
+(1) **Relative motion** ([scripts/run_teleop_ur10e.py](../../scripts/run_teleop_ur10e.py) main loop):
+- `r` 키 sync 시작 / `c` 키 (즉시 재캘리) / `p` 키 (pause → resume 시 자동 재캘리) 시 origin 재캡처
+- `--scale` argparse (default 1.0, position 만 — rotation 은 항상 1:1)
+- 자세한 동작 §3.1.
+
+(2) **DG-5F IndexError 수정** ([scripts/dg5f_controller.py:_ctrl_publish](../../scripts/dg5f_controller.py)):
+- 원인: stock `unitree_hg.HandCmd_` 의 `motor_cmd` 가 **Dex3 기준 7-slot** default. DG-5F 20 joint 인덱싱 시 `IndexError: list index out of range`.
+- 해결: CycloneDDS `Sequence[MotorCmd_]` 는 가변 길이 — 매 publish 시 `msg.motor_cmd = [unitree_hg_msg_dds__MotorCmd_() for _ in range(20)]` 로 list 교체 후 채움. sim docker 가 20-slot wire format 으로 받음.
+- `_subscribe_hand_state` 도 `min(20, len(msg.motor_state))` guard 추가 (sim 측 state 길이 동적 대응).
 
 자세한 동작은 §3.1 참조.
 
@@ -62,15 +71,33 @@ sol_q = arm_ik.solve_ik(np.eye(4), target_pose, current_q)
 | 키 | 동작 |
 |---|---|
 | **r** | sync 시작 + **첫 origin 캡처** |
-| **c** | recalibrate — 현재 손 위치 = 현재 robot 위치를 **새 origin** 으로 |
+| **p** | **pause/resume 토글**. resume 시 자동 recalibrate. **권장 워크플로우** — 손을 새 위치로 옮기는 동안 robot 정지 |
+| **c** | **즉시 recalibrate** (jump 가능) — pause 없이 현재 손 = 현재 robot 새 origin |
 | **q** | stop / exit |
 
-사용 시나리오:
+`p` 와 `c` 의 차이:
+- **`p`** (pause/resume): 손 새 위치로 옮기는 동안 robot 정지 → resume 시 그 위치에서 새 origin. **안전** 워크플로우.
+- **`c`** (immediate recal): 현재 시점에 즉시 origin 교체. 그 사이 손 이동이 큰 거리였다면 robot 이 **jump** 할 가능성. 빠른 미세조정용.
+
+### 사용 시나리오
+
+**기본 시작**:
 1. sim 부팅 + xr_teleop 부팅 → Quest 3 Enter VR + 손 들기
-2. 손이 사용자에게 편한 위치 (팔꿈치 약 90°) 에 놓은 상태에서 `r` 키
-3. 사용자가 손 움직이면 robot 이 같은 delta 만큼 움직임
-4. 손이 어색한 위치로 이동했을 때 → 손 다시 편한 위치로 → `c` 키 → 새 origin → 계속 진행
-5. `q` 키 또는 Ctrl+C 종료
+2. 손이 사용자에게 편한 위치 (팔꿈치 약 90°) 에 놓은 상태에서 `r` 키 → sync 시작
+3. 사용자가 손 움직이면 robot 이 같은 delta 만큼 움직임 (1:1, rotation 도 1:1)
+
+**손이 어색해졌을 때 (안전 워크플로우)**:
+1. `p` 키 → ⏸ pause (robot 정지, 손 자유 이동)
+2. 손을 새 편한 위치로
+3. `p` 키 다시 → ▶ resume + 자동 recalibrate (새 origin)
+4. sync 재개
+
+**빠른 미세조정 (jump 허용)**:
+1. 손을 약간 옆으로 옮긴 직후 `c` 키 → 즉시 새 origin
+2. robot 은 마지막 명령 그대로지만 이후부터는 새 origin 기준 delta
+
+**종료**:
+- `q` 키 또는 Ctrl+C → arm 이 init pose 로 천천히 복귀 후 종료
 
 ### `--scale` 옵션
 
