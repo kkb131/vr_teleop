@@ -254,7 +254,20 @@ def main() -> int:
                 f"q={val:+.4f}",
             )
 
-    # (c) ROUND-TRIP: 좌표계 align 무관 검증
+    # (c) ROUND-TRIP: 좌표계 align 무관 검증 (vector type 한정)
+    # DexPilot 은 ref_value shape (2, 15) — pair-distance 항 포함. 단위 테스트 round-trip
+    # 정밀 검증은 실제 hand data 로 sim test 에서.
+    retargeting_type = retargeter.optimizer.retargeting_type
+    if retargeting_type == "DEXPILOT" or len(target_joint_names) == 20:
+        print(f"\n[test] ─── (c) round-trip skip — {retargeting_type} type ───")
+        print("  pair-distance 항 때문에 fingertip-only round-trip 불가.")
+        print("  실제 Quest 3 hand keypoint 로 sim 측 visual 검증 (Unit 5 e2e).")
+        if ok:
+            print("\n[test] ✅ ALL CHECKS PASSED (a, b)")
+        else:
+            print("\n[test] ❌ FAIL")
+        return 0 if ok else 3
+
     print("\n[test] ─── (c) round-trip 검증 (좌표계 align 무관) ───")
     robot = retargeter.optimizer.robot
     palm_link_id = robot.get_link_index("rl_dg_palm")

@@ -34,6 +34,51 @@
 
 자세한 동작은 §3.1 참조.
 
+### 2026-05-11 2차 실측 후 사용자 피드백 + 처방 (DexPilot 전환)
+
+사용자 2차 실측 (relative motion + IndexError fix 후):
+- ✅ UR10e 가 Quest 3 wrist pose 따라 움직임
+- ✅ UR init pose 사용자 튜닝 `[0.0, -1.18, 2.06, -0.88, 1.50, 0.0]`
+- ❌ **DG-5F 가 전혀 움직이지 않고 주먹 자세로 고정** — 사용자 손 펴진 상태인데도
+
+원인 진단 (`/workspaces/tamp_ws/src/retarget_dev/models/dex_retarget/docs/dg5f_tuning.md` 분석):
+
+기존 retarget_dev 팀이 동일 증상을 검증된 처방으로 해결했음:
+1. **URDF PIP/DIP joint limit 음수 영역 (`[-π/2, +π/2]`)** → optimizer 가 "방향만 맞추는" cost 최소 해로 음수 사용 → 손등 꺾임 / fist-like 자세
+2. **scaling_factor 1.0** → DG-5F 가 사람 손보다 ~1.2배 큰데 1:1 매핑 → 구부정한 자세
+3. **vector type 의 magnitude underdetermined** → DexPilot 으로 전환 시 fingertip pair-distance cost 추가로 정확
+
+검증된 권장 설정 그대로 적용:
+
+```yaml
+# assets/dg5f_hand/dg5f_right.yml
+right:
+  type: DexPilot                    # vector → DexPilot (pair-distance cost)
+  urdf_path: dg5f_hand/dg5f_right_retarget.urdf   # PIP/DIP lower=0
+  wrist_link_name: "rl_dg_palm"
+  finger_tip_link_names: [rl_dg_1_tip, ..., rl_dg_5_tip]
+  scaling_factor: 1.2               # 사람 손 ~1.2배 확대
+  low_pass_alpha: 0.2
+```
+
+추가 작업:
+- [assets/dg5f_hand/dg5f_right_retarget.urdf](../../assets/dg5f_hand/dg5f_right_retarget.urdf) 신규 — PIP/DIP joint 10개의 lower limit `-π/2 → 0` (Thumb _1_2 `[-π,0]` 은 그대로). retarget_dev fork 후 mesh URI 만 `./meshes/` 로 patch.
+- [scripts/dg5f_controller.py](../../scripts/dg5f_controller.py) 수정:
+  - DexPilot type 시 `target_joint_names == 20` — `expand_retarget_to_dg5f_20` 우회.
+  - URDF 등장 순서 == DDS index 순서 (rj_dg_1_1, ..., _5_4) — `robot_qpos[:20]` 그대로 사용.
+  - vector type 백워드 호환 유지 (yml 변경 시 자동 분기).
+
+**검증된 사실**:
+- DexPilot 의 auto-generated `target_link_human_indices` 가 **WebXR 25-joint fingertip 인덱스 [4, 9, 14, 19, 24] 와 정확히 일치** (MANO 21-joint 가 아님). 좌표 변환 layer 불필요.
+- 단위 테스트 (a) build + (b) URDF limit 모두 PASS. (c) round-trip 은 DexPilot pair-distance ref_value (2, 15) shape 이라 fingertip-only round-trip 불가 — sim test 에서 검증.
+- 3 dummy pose 에 retargeter 가 다른 값 반환 (입력에 반응). **fist 고정 문제 해결 가능성 큼**.
+
+Unit 5 재측정 항목 (DexPilot 전환 후):
+- DG-5F 손가락 굽힘 visual 추종 (G4-10)
+- 굽힘 magnitude (G4-11) — 1.2 scaling 충분한가
+- thumb sign convention (G4-12)
+- 손가락 vs 손 펴짐 정확도 (open hand → DG-5F 도 펴진 자세인가)
+
 ---
 
 ## 3.1 Relative motion 캘리브레이션 (Unit 5+ 추가)

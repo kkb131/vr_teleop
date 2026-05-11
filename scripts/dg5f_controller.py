@@ -253,15 +253,24 @@ class DG5F_Controller:
                         right_hand_data[self.right_indices[1, :]]
                         - right_hand_data[self.right_indices[0, :]]
                     )
-                    # 4) retarget → 20-vec robot_qpos (target + fixed mixed)
+                    # 4) retarget → robot_qpos (target + fixed mixed)
                     robot_qpos = self.right_retargeting.retarget(ref_value, fixed_qpos=fixed_qpos)
-                    # 5) target 6 joint 추출
-                    q_target_dict = {}
-                    for n in self.target_joint_names:
-                        idx = self.full_joint_names.index(n)
-                        q_target_dict[n] = robot_qpos[idx]
-                    # 6) 20-joint expansion (mimic + finger 외전 fixed)
-                    q_20_target = expand_retarget_to_dg5f_20(self.target_joint_names, q_target_dict)
+
+                    # 5) DDS 20-vec 추출
+                    # - DexPilot (target=20): robot_qpos.shape == (20,) 그대로 사용.
+                    #   URDF 순서 = DDS index 순서 (rj_dg_1_1, ..., _5_4) 이므로 직접 매핑.
+                    # - vector (target=6, 이전 config 호환): expand_retarget_to_dg5f_20 으로
+                    #   mimic 0.6/0.4 확장.
+                    if len(self.target_joint_names) == DG5F_Num_Motors:
+                        # DexPilot or full-target retargeter
+                        q_20_target = np.array(robot_qpos[:DG5F_Num_Motors], dtype=np.float64)
+                    else:
+                        # subset target (e.g. vector type with 6 target joint)
+                        q_target_dict = {
+                            n: robot_qpos[self.full_joint_names.index(n)]
+                            for n in self.target_joint_names
+                        }
+                        q_20_target = expand_retarget_to_dg5f_20(self.target_joint_names, q_target_dict)
 
                 # 7) Publish
                 self._ctrl_publish(q_20_target)
