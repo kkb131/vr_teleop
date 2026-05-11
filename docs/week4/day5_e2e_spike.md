@@ -79,6 +79,55 @@ Unit 5 재측정 항목 (DexPilot 전환 후):
 - thumb sign convention (G4-12)
 - 손가락 vs 손 펴짐 정확도 (open hand → DG-5F 도 펴진 자세인가)
 
+### 2026-05-11 3차 실측 후 사용자 피드백 + 처방 (U5++ frame transform)
+
+사용자 3차 실측 (DexPilot 전환 후):
+- ✅ scaling_factor 변경에 따라 DG-5F 동작 magnitude 변화 (retargeter 입력 응답 OK)
+- ❌ **자세 부정확** — 사용자 손목 회전이 손가락 자세에 잘못 반영
+- 사용자 추론: "잘못된 wrist pose 기준으로 dex-retargeting 동작" + `unitree_dex3.yml` 의 `target_link_human_indices_dexpilot` 명시 indices 도 같이 분석 요청
+
+3 개 Explore agent 병렬 조사 (televuer / dex_retargeting / retarget_dev) 종합:
+
+(1) **televuer `right_hand_pos` 가 arm-frame translation 만 정렬** ([tv_wrapper.py:330-331](../../xr_teleoperate/teleop/televuer/src/televuer/tv_wrapper.py#L330) `fast_mat_inv`) — wrist orientation rotate 안 함.
+(2) **dex_retargeting vector cost 는 magnitude only** (회전 무관) — input 이 wrist-local frame 이어야 정확. `wrist_link_name` 은 origin link 후보일 뿐 rotate 안 함.
+(3) **retarget_dev 의 검증된 패턴**: `apply_mano_transform()` 가 표준 — wrist-center + SVD palm-plane fit + operator2mano rotation. [retarget_dev manus_debug.md](../../../retarget_dev/models/dex_retarget/docs/manus_debug.md) 의 "fist→spread inversion" 버그 90% 원인이 이 변환 누락 (12 배 개선).
+
+추가 분석 (사용자 indices 지적):
+- upstream 모든 5-finger hand yml (`inspire_hand.yml`, `brainco.yml`) `target_link_human_indices_dexpilot` = `[[9,14,19,24,14,19,24,19,24,24,0,0,0,0,0], [4,4,4,4,9,9,9,14,14,19,4,9,14,19,24]]`
+- xr_teleoperate 라이브러리 표준 = **WebXR 25-keypoint convention** (5 finger × 5 keypoint, NOT MANO 21).
+- 우리 yml auto-generated 결과 (U5+ 검증) 와 100% 일치 → indices 자체는 정확. 명시 추가는 explicit 안전 (동작 동일).
+
+### 적용 (commit 별도)
+
+| 파일 | 변경 |
+|---|---|
+| [scripts/dg5f_controller.py](../../scripts/dg5f_controller.py) | `_OPERATOR2MANO_RIGHT`, `_estimate_wrist_frame_webxr`, `webxr_to_wrist_local_mano` 신규 + `_control_process()` 에 변환 적용 (1 줄) |
+| [assets/dg5f_hand/dg5f_right.yml](../../assets/dg5f_hand/dg5f_right.yml) | `target_link_human_indices_dexpilot` 명시 추가 (Inspire 패턴) |
+| [scripts/test_dg5f_retargeting.py](../../scripts/test_dg5f_retargeting.py) | (d) yaw rotation robustness check 추가 |
+
+### 검증 결과 (단위 테스트)
+
+```
+(d) yaw 90° rotation → 동일 wrist-local 출력   ||diff|| = 0.000000
+(d) ref_value yaw rotation 무관                ||diff|| = 0.000000
+[test] ✅ ALL CHECKS PASSED (a, b, d)
+```
+
+→ **사용자 손목 회전 무관하게 동일 손가락 자세 → 동일 ref_value** 검증.
+
+### Convention 결정 — `mediapipe` default
+
+- WebXR API 가 image-derived MediaPipe 와 같은 chirality 인지 미확정 — 사용자 visual 확인 후 fist↔spread inversion 시 row 1 sign flip (`[[0,0,-1],[1,0,0],[0,1,0]]` MANUS variant).
+- 초기 default 는 retarget_dev phone path 검증 일치 (`MEDIAPIPE_OPERATOR2MANO_RIGHT`).
+
+### Unit 5 재측정 (4 차) 시 확인 항목
+
+- ✅ 손목 회전 + 손 자세 그대로 → DG-5F 손가락 자세 변화 없음 (회전 robust)
+- ✅ open hand → DG-5F 펴짐
+- ✅ fist → DG-5F 굽음
+- ❓ fist↔spread inversion (mediapipe vs manus convention 결정)
+- ❓ thumb-index pinch 정확도 (DexPilot pair-distance)
+
 ---
 
 ## 3.1 Relative motion 캘리브레이션 (Unit 5+ 추가)

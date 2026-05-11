@@ -48,6 +48,79 @@ DEFAULT_YML_PATH = _REPO_ROOT / "assets" / "dg5f_hand" / "dg5f_right.yml"
 DEFAULT_ASSETS_DIR = _REPO_ROOT / "assets"
 
 
+# ─────────────────────────────────────────────────────────────────
+# Wrist-local + palm-aligned frame transform for WebXR 25-keypoint hand.
+#
+# Why: televuer 의 right_hand_pos 는 arm-frame translation 만 정렬 — wrist
+# orientation 미반영. dex_retargeting vector cost 는 magnitude only 라 두 vec
+# 가 같은 frame 이어야 정확. 그대로 넘기면 사용자 손목 회전 시 손가락 자세가
+# 잘못 풀이됨 ("잘못된 wrist pose 기준" — 사용자 보고).
+#
+# 처방: retarget_dev/sensing/core/mano_transform.py 의 apply_mano_transform
+# 패턴 그대로. MANO 21-joint 가 아니라 WebXR 25-joint 인덱스로 적응.
+# 검증: retarget_dev manus_debug.md — 같은 변환 누락 버그가 fist→spread
+# inversion 의 90% 원인 (12 배 개선 측정).
+# ─────────────────────────────────────────────────────────────────
+
+# MediaPipe convention (retarget_dev 의 phone path 검증). WebXR HandLandmarker
+# 가 image-derived MediaPipe 와 같은 chirality 인지 미확정 — 사용자 visual
+# 확인 시 fist↔spread 가 반대면 MANUS variant 로 전환 (row 1 sign flip).
+_OPERATOR2MANO_RIGHT = np.array(
+    [[0, 0, -1],
+     [-1, 0, 0],
+     [0, 1, 0]],
+    dtype=np.float64,
+)
+
+
+def _estimate_wrist_frame_webxr(kp_25: np.ndarray) -> np.ndarray:
+    """WebXR 25-joint wrist frame estimation via palm-plane SVD.
+
+    retarget_dev/sensing/core/mano_transform.py:estimate_wrist_frame
+    의 WebXR 변형. palm-plane 정의의 3 점만 인덱스 변경:
+      - MANO 21: [0, 5, 9]   = wrist, index_MCP, middle_MCP
+      - WebXR 25: [0, 5, 10] = wrist, index-metacarpal, middle-metacarpal
+    metacarpal 이 palm 안쪽이라 palm-plane fit 정확도 ↑.
+
+    Returns
+    -------
+    (3, 3) rotation matrix — columns = x/y/z basis vectors of wrist frame.
+    """
+    points = kp_25[[0, 5, 10], :]
+    # x: palm → middle finger base
+    x_vector = points[0] - points[2]
+    # SVD palm-plane normal
+    centered = points - points.mean(axis=0, keepdims=True)
+    _u, _s, v = np.linalg.svd(centered)
+    normal = v[2, :]
+    # Gram-Schmidt: x ⊥ normal
+    x = x_vector - np.dot(x_vector, normal) * normal
+    x = x / (np.linalg.norm(x) + 1e-10)
+    z = np.cross(x, normal)
+    # disambiguation: z 는 pinky → index 방향
+    if np.dot(z, (points[1] - points[2])) < 0:
+        normal = -normal
+        z = -z
+    return np.stack([x, normal, z], axis=1).astype(np.float64)
+
+
+def webxr_to_wrist_local_mano(kp_25: np.ndarray) -> np.ndarray:
+    """WebXR (25, 3) world frame → wrist-local + palm-aligned (25, 3).
+
+    Pipeline (retarget_dev/sensing/core/mano_transform.py:apply_mano_transform
+    그대로):
+        1. wrist-center: pos - pos[0]
+        2. SVD palm-plane fit → wrist rotation
+        3. kp @ wrist_rot @ operator2mano
+
+    사용자가 손목을 yaw/pitch/roll 회전해도 손가락 자세가 같으면 동일한
+    출력 — retargeter 가 손가락 자세만 학습.
+    """
+    centered = kp_25 - kp_25[0]
+    wrist_rot = _estimate_wrist_frame_webxr(centered)
+    return centered @ wrist_rot @ _OPERATOR2MANO_RIGHT
+
+
 def expand_retarget_to_dg5f_20(
     target_joint_names: list,
     q_target_dict: dict,
@@ -248,10 +321,16 @@ class DG5F_Controller:
 
                 # 2) hand 가 초기화 안 됐으면 skip (Dex3 패턴)
                 if not np.all(right_hand_data == 0.0):
+                    # 2.5) Frame 변환 (U5++): WebXR world → wrist-local + palm-aligned
+                    # televuer 가 wrist orientation 미반영한 채 hand_pos 를 넘김 →
+                    # 사용자 손목 회전 시 retargeter 가 잘못 풀이. retarget_dev 의
+                    # apply_mano_transform 패턴 적용해 동일 손가락 자세는 동일 출력.
+                    hand_local = webxr_to_wrist_local_mano(right_hand_data)
+
                     # 3) ref_value = task - origin vector (Day 1 spike)
                     ref_value = (
-                        right_hand_data[self.right_indices[1, :]]
-                        - right_hand_data[self.right_indices[0, :]]
+                        hand_local[self.right_indices[1, :]]
+                        - hand_local[self.right_indices[0, :]]
                     )
                     # 4) retarget → robot_qpos (target + fixed mixed)
                     robot_qpos = self.right_retargeting.retarget(ref_value, fixed_qpos=fixed_qpos)

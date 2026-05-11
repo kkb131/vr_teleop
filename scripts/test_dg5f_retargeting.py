@@ -262,8 +262,46 @@ def main() -> int:
         print(f"\n[test] ─── (c) round-trip skip — {retargeting_type} type ───")
         print("  pair-distance 항 때문에 fingertip-only round-trip 불가.")
         print("  실제 Quest 3 hand keypoint 로 sim 측 visual 검증 (Unit 5 e2e).")
+
+        # (d) U5++ frame transform robustness — yaw rotation 무관성
+        print("\n[test] ─── (d) frame transform robustness (yaw rotation) ───")
+        try:
+            sys.path.insert(0, str(REPO_ROOT / "scripts"))
+            from dg5f_controller import webxr_to_wrist_local_mano
+
+            # yaw 90° rotation matrix (z-axis)
+            cos90, sin90 = 0.0, 1.0
+            R_yaw = np.array([[cos90, -sin90, 0], [sin90, cos90, 0], [0, 0, 1]], dtype=np.float64)
+
+            hand_open = make_dummy_hand("open")     # 정상 자세
+            hand_open_rotated = hand_open @ R_yaw.T  # 손 전체 90° yaw 회전
+
+            local_orig = webxr_to_wrist_local_mano(hand_open)
+            local_rot = webxr_to_wrist_local_mano(hand_open_rotated)
+            diff = np.linalg.norm(local_orig - local_rot)
+            check(
+                diff < 1e-3,
+                "(d) frame transform: yaw 90° rotation → 동일 wrist-local 출력",
+                f"||diff||={diff:.6f}",
+            )
+
+            # ref_value 도 동일해야 retargeter 가 같은 q 풀이
+            indices_ = retargeter.optimizer.target_link_human_indices
+            ref_orig = local_orig[indices_[1, :]] - local_orig[indices_[0, :]]
+            ref_rot = local_rot[indices_[1, :]] - local_rot[indices_[0, :]]
+            ref_diff = np.linalg.norm(ref_orig - ref_rot)
+            check(
+                ref_diff < 1e-3,
+                "(d) ref_value: yaw rotation 무관",
+                f"||diff||={ref_diff:.6f}",
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            check(False, "(d) frame transform import / exec", f"err={e}")
+
         if ok:
-            print("\n[test] ✅ ALL CHECKS PASSED (a, b)")
+            print("\n[test] ✅ ALL CHECKS PASSED (a, b, d)")
         else:
             print("\n[test] ❌ FAIL")
         return 0 if ok else 3

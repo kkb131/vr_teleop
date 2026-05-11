@@ -30,6 +30,15 @@ right:
     - "rl_dg_4_tip"  # Ring
     - "rl_dg_5_tip"  # Pinky
 
+  # WebXR 25-keypoint indices (Inspire / BrainCo upstream 패턴 그대로):
+  # - pair-distance 10 vector (finger 5C2 = 10 pair)
+  # - wrist→fingertip 5 vector (origin=0 wrist, task=4/9/14/19/24 fingertips)
+  # 총 15 vector. dex_retargeting auto-generate 결과와 100% 일치 (U5+ 검증)
+  # 이지만 explicit 명시로 향후 convention toggle 안전.
+  target_link_human_indices_dexpilot:
+    - [ 9, 14, 19, 24, 14, 19, 24, 19, 24, 24,  0,  0,  0,  0,  0]
+    - [ 4,  4,  4,  4,  9,  9,  9, 14, 14, 19,  4,  9, 14, 19, 24]
+
   # 사람 손 ~1.2배 확대 (DG-5F가 1.2~1.3배 큼)
   scaling_factor: 1.2
   # 작을수록 smooth, latency ↑
