@@ -105,9 +105,33 @@ fail rate     < 5%              (실측 0/100)
 
 IK 솔버만 작성. DDS publisher (Unit 3) + teleop entry (Unit 4) 추가 후 sim 연결 가능.
 
-## Unit 3: Controllers (대기)
+## Unit 3: UR10e_ArmController + DG5F_Controller (✅ 2026-05-11)
 
-(작업 진행 시 추가)
+### 3.1 무엇이 추가됐나
+
+- [scripts/ur10e_arm_controller.py](../../scripts/ur10e_arm_controller.py) — `UR10e_ArmController` (rt/lowcmd[0:6] publisher + rt/lowstate subscriber + 250Hz publish thread)
+- [scripts/dg5f_controller.py](../../scripts/dg5f_controller.py) — `DG5F_Controller` (single-hand, rt/dg5f/cmd[0:20] publisher) + `expand_retarget_to_dg5f_20` (6 retarget joint → 20-vec with mimic 0.6/0.4)
+- [scripts/test_controllers_smoke.py](../../scripts/test_controllers_smoke.py) — import + constants + expansion 규칙
+
+### 3.2 검증 명령
+
+```bash
+conda activate tv && unset PYTHONPATH
+python /workspaces/tamp_ws/src/xr_teleop/scripts/test_controllers_smoke.py
+```
+
+마지막 줄 `[smoke] ✅ ALL CHECKS PASSED` 확인.
+
+### 3.3 통과 기준 (smoke level)
+
+- UR10E_Num_Motors=6, DG5F_Num_Motors=20, topic 이름 sim 보고서 일치
+- 6 input joint → 20 joint 확장 시 thumb negative + finger 외전 fixed + mimic 0.6/0.4 정확
+
+DDS instantiate (sim 연결) 정확도는 Unit 5 e2e 단계에서. 상세: [day3_controllers_spike.md](day3_controllers_spike.md).
+
+### 3.4 Unit 3까지로는 sim teleop 불가
+
+teleop entry (Unit 4) 추가 후 sim 연결 가능. Controllers 는 instantiate 단계에서 DDS subscribe 대기로 hang — sim docker 부팅 후 동작.
 
 ## Unit 4: teleop_hand_and_arm.py 통합 (대기)
 

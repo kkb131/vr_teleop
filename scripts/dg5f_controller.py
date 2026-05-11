@@ -1,0 +1,273 @@
+"""DG-5F single-hand DDS controller + retargeting.
+
+Dex3_1_Controller (xr_teleoperate/teleop/robot_control/robot_hand_unitree.py)
+패턴 복제 + single-hand. sim docker (unitree_sim_isaaclab fork) 의 신규 topic
+`rt/dg5f/cmd` / `rt/dg5f/state` 사용 (sim 보고서 §1.1).
+
+dex_retargeting 의 vector retargeting 으로 6 target joint 풀이 후 20 joint
+finger-major vector 로 확장 (Day 1 spike §확장 규칙):
+  - DDS 0  ← rj_dg_1_1 (retarget)            thumb 외전
+  - DDS 1  ← rj_dg_1_2 (retarget, negative)  thumb 굴곡
+  - DDS 2  = 0.6 * DDS 1                    thumb 중 mimic
+  - DDS 3  = 0.4 * DDS 1                    thumb tip mimic
+  - DDS 4, 8, 12, 16 = 0.0                  finger 외전 fixed
+  - DDS 5  ← rj_dg_2_2 (retarget)           index 굴곡
+  - DDS 6  = 0.6 * DDS 5
+  - DDS 7  = 0.4 * DDS 5
+  - ... (middle, ring, pinky 동일)
+"""
+from __future__ import annotations
+
+import os
+import sys
+import threading
+import time
+from multiprocessing import Array, Lock, Process
+from pathlib import Path
+
+import numpy as np
+import yaml
+
+from dex_retargeting import RetargetingConfig
+from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
+from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_
+from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_, HandState_
+
+
+# sim 보고서 §1.1 신규 topic
+kTopicDG5FCommand = "rt/dg5f/cmd"
+kTopicDG5FState = "rt/dg5f/state"
+DG5F_Num_Motors = 20  # sim 보고서 §1.3 finger-major 20 joint
+
+# 본 repo의 assets/dg5f_hand/
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_YML_PATH = _REPO_ROOT / "assets" / "dg5f_hand" / "dg5f_right.yml"
+DEFAULT_ASSETS_DIR = _REPO_ROOT / "assets"
+
+
+def expand_retarget_to_dg5f_20(
+    target_joint_names: list,
+    q_target_dict: dict,
+    mimic_mid: float = 0.6,
+    mimic_tip: float = 0.4,
+) -> np.ndarray:
+    """retargeting 6 joint q → 20-vec DDS motor command.
+
+    DG-5F finger-major: thumb(0..3), index(4..7), middle(8..11), ring(12..15),
+    pinky(16..19). 각 finger 4 joint: _1 외전, _2 굴곡, _3 mid, _4 tip.
+
+    Mimic rule:
+      _3 = mimic_mid * _2
+      _4 = mimic_tip * _2
+      _1 (외전) = retargeting 결과 그대로 또는 0 (thumb 만 retarget, 나머지 0).
+
+    Parameters
+    ----------
+    target_joint_names : retargeter.optimizer.target_joint_names 순서
+    q_target_dict : {joint_name: q value}  — retarget 결과 6 joint
+    mimic_mid, mimic_tip : human PIP/DIP 굽힘 비율 추정. Unit 5 sim test 에서 조정.
+
+    Returns
+    -------
+    (20,) np.ndarray  -- DDS motor_cmd[0:20] 그대로 채울 수 있음
+    """
+    q = np.zeros(DG5F_Num_Motors, dtype=np.float64)
+
+    # thumb (DDS 0..3)
+    q[0] = q_target_dict.get("rj_dg_1_1", 0.0)
+    q[1] = q_target_dict.get("rj_dg_1_2", 0.0)
+    q[2] = mimic_mid * q[1]
+    q[3] = mimic_tip * q[1]
+
+    # index (DDS 4..7)
+    q[4] = 0.0  # 외전 fixed
+    q[5] = q_target_dict.get("rj_dg_2_2", 0.0)
+    q[6] = mimic_mid * q[5]
+    q[7] = mimic_tip * q[5]
+
+    # middle (DDS 8..11)
+    q[8] = 0.0
+    q[9] = q_target_dict.get("rj_dg_3_2", 0.0)
+    q[10] = mimic_mid * q[9]
+    q[11] = mimic_tip * q[9]
+
+    # ring (DDS 12..15)
+    q[12] = 0.0
+    q[13] = q_target_dict.get("rj_dg_4_2", 0.0)
+    q[14] = mimic_mid * q[13]
+    q[15] = mimic_tip * q[13]
+
+    # pinky (DDS 16..19)
+    q[16] = 0.0
+    q[17] = q_target_dict.get("rj_dg_5_2", 0.0)
+    q[18] = mimic_mid * q[17]
+    q[19] = mimic_tip * q[17]
+
+    return q
+
+
+class DG5F_Controller:
+    """DG-5F single-hand DDS controller — Dex3_1_Controller 패턴 + single-hand.
+
+    Quest 3 hand keypoint (25, 3) 를 우측 손 only 로 받아 retargeting →
+    20 joint expand → `rt/dg5f/cmd` publish.
+
+    Parameters
+    ----------
+    right_hand_array_in : multiprocessing.Array (75 = 25*3)
+        Quest 3 right hand keypoint. teleop_hand_and_arm.py 가 shared array
+        에 write.
+    hand_data_lock, hand_state_array_out, hand_action_array_out :
+        Dex3 패턴과 동일 (state / action 출력 공유 — 녹화/디버깅).
+    fps : control loop frequency.
+    simulation_mode : sim 모드 (현재 cleanup 차이 없음, 호환성 위해).
+    yml_path : retargeting yml 경로. 기본은 assets/dg5f_hand/dg5f_right.yml.
+    """
+
+    def __init__(
+        self,
+        right_hand_array_in,
+        hand_data_lock=None,
+        hand_state_array_out=None,
+        hand_action_array_out=None,
+        fps: float = 100.0,
+        simulation_mode: bool = True,
+        yml_path: Path = DEFAULT_YML_PATH,
+        assets_dir: Path = DEFAULT_ASSETS_DIR,
+    ):
+        print("[DG5F_Controller] init...")
+        self.fps = fps
+        self.simulation_mode = simulation_mode
+
+        # retargeter build
+        with open(yml_path) as f:
+            cfg = yaml.safe_load(f)
+        right_cfg = cfg["right"]
+        RetargetingConfig.set_default_urdf_dir(str(assets_dir))
+        self.right_retargeting = RetargetingConfig.from_dict(right_cfg).build()
+        self.right_indices = self.right_retargeting.optimizer.target_link_human_indices
+        self.target_joint_names = list(self.right_retargeting.optimizer.target_joint_names)
+        self.fixed_joint_names = list(self.right_retargeting.optimizer.fixed_joint_names)
+        self.full_joint_names = list(self.right_retargeting.joint_names)
+        print(f"[DG5F_Controller] retargeter: target={len(self.target_joint_names)} joints, "
+              f"fixed={len(self.fixed_joint_names)}")
+
+        # DDS pub/sub
+        self.cmd_publisher = ChannelPublisher(kTopicDG5FCommand, HandCmd_)
+        self.cmd_publisher.Init()
+        self.state_subscriber = ChannelSubscriber(kTopicDG5FState, HandState_)
+        self.state_subscriber.Init()
+
+        # shared hand state array (multiprocessing)
+        self.hand_state_array = Array("d", DG5F_Num_Motors, lock=True)
+
+        # subscribe thread
+        self._subscribe_thread = threading.Thread(target=self._subscribe_hand_state)
+        self._subscribe_thread.daemon = True
+        self._subscribe_thread.start()
+
+        # wait for first state
+        wait_t0 = time.time()
+        while True:
+            if any(self.hand_state_array):
+                break
+            time.sleep(0.01)
+            if time.time() - wait_t0 > 10.0:
+                print("[DG5F_Controller] WARN: rt/dg5f/state 10s 미수신 — sim docker 부팅 확인")
+                wait_t0 = time.time()
+        print("[DG5F_Controller] subscribed rt/dg5f/state.")
+
+        # control process — Dex3 와 같은 multiprocessing.Process 분리
+        self._hand_control_process = Process(
+            target=self._control_process,
+            args=(
+                right_hand_array_in,
+                self.hand_state_array,
+                hand_data_lock,
+                hand_state_array_out,
+                hand_action_array_out,
+            ),
+            daemon=True,
+        )
+        self._hand_control_process.start()
+
+        print("[DG5F_Controller] init OK.")
+
+    def _subscribe_hand_state(self):
+        while True:
+            msg = self.state_subscriber.Read()
+            if msg is not None:
+                for i in range(DG5F_Num_Motors):
+                    self.hand_state_array[i] = msg.motor_state[i].q
+            time.sleep(0.002)
+
+    def _ctrl_publish(self, q_20: np.ndarray):
+        """20 joint q vector → `rt/dg5f/cmd` publish."""
+        msg = unitree_hg_msg_dds__HandCmd_()
+        for i in range(DG5F_Num_Motors):
+            msg.motor_cmd[i].mode = 1
+            msg.motor_cmd[i].q = float(q_20[i])
+            msg.motor_cmd[i].dq = 0.0
+            msg.motor_cmd[i].tau = 0.0
+            msg.motor_cmd[i].kp = 1.5  # Dex3 default (sim은 자체 PD 사용, 무시)
+            msg.motor_cmd[i].kd = 0.2
+        self.cmd_publisher.Write(msg)
+
+    def _control_process(
+        self,
+        right_hand_array_in,
+        hand_state_array,
+        hand_data_lock,
+        hand_state_array_out,
+        hand_action_array_out,
+    ):
+        """retargeting + DDS publish loop (자식 프로세스). Dex3 패턴."""
+        q_20_target = np.zeros(DG5F_Num_Motors)
+        fixed_qpos = np.zeros(len(self.fixed_joint_names), dtype=np.float64)
+
+        try:
+            while True:
+                t0 = time.time()
+
+                # 1) Quest 3 right hand keypoint 읽기
+                with right_hand_array_in.get_lock():
+                    right_hand_data = np.array(right_hand_array_in[:]).reshape(25, 3).copy()
+
+                # 2) hand 가 초기화 안 됐으면 skip (Dex3 패턴)
+                if not np.all(right_hand_data == 0.0):
+                    # 3) ref_value = task - origin vector (Day 1 spike)
+                    ref_value = (
+                        right_hand_data[self.right_indices[1, :]]
+                        - right_hand_data[self.right_indices[0, :]]
+                    )
+                    # 4) retarget → 20-vec robot_qpos (target + fixed mixed)
+                    robot_qpos = self.right_retargeting.retarget(ref_value, fixed_qpos=fixed_qpos)
+                    # 5) target 6 joint 추출
+                    q_target_dict = {}
+                    for n in self.target_joint_names:
+                        idx = self.full_joint_names.index(n)
+                        q_target_dict[n] = robot_qpos[idx]
+                    # 6) 20-joint expansion (mimic + finger 외전 fixed)
+                    q_20_target = expand_retarget_to_dg5f_20(self.target_joint_names, q_target_dict)
+
+                # 7) Publish
+                self._ctrl_publish(q_20_target)
+
+                # 8) state / action shared array update
+                if hand_state_array_out is not None and hand_action_array_out is not None:
+                    state_now = np.array(hand_state_array[:])
+                    with hand_data_lock:
+                        # state/action 둘 다 20-vec. 단순 mirror — record 용
+                        hand_state_array_out[:] = state_now[: len(hand_state_array_out)]
+                        hand_action_array_out[:] = q_20_target[: len(hand_action_array_out)]
+
+                # 9) sleep to maintain fps
+                elapsed = time.time() - t0
+                time.sleep(max(0, 1.0 / self.fps - elapsed))
+        except KeyboardInterrupt:
+            pass
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("[DG5F_Controller] control_process exited.")
