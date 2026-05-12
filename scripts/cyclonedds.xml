@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS unicast discovery config — 조종 PC ↔ 로봇 PC 가 다른 호스트로
+  분리됐을 때 사용. 같은 host (+ --network=host) 면 이 파일 없이 멀티캐스트
+  자동 discovery 만으로 충분.
+
+  활성화:
+    export XR_DDS_REMOTE=1
+    source scripts/dds_env.sh
+  ( dds_env.sh 가 XR_DDS_REMOTE=1 일 때만 CYCLONEDDS_URI 를 export 함.
+    그 외에는 같은 host 멀티캐스트 경로를 그대로 유지. )
+
+  편집 포인트:
+    1) <Peers> 안의 IP — 두 PC 의 실제 IP 로 교체. 양쪽 PC 가 이 파일을 그대로
+       공유할 수 있도록 자기 자신 IP 도 포함해도 무해함.
+    2) NIC 이름이 양쪽 PC 에서 다르거나 multi-homed 환경이면 autodetermine
+       대신 명시적으로 `<NetworkInterface name="wlan0" .../>` 로 교체.
+       (확인: `ip -br addr`)
+
+  ROS2 토픽 + unitree_sdk2py 의 rt/lowstate, rt/lowcmd 등 양쪽 모두에 적용됨
+  (둘 다 CycloneDDS backend 공유).
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config
+            https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <!-- 기본 경로의 NIC 자동 선택. multi-homed 면 name="..." 로 명시 -->
+        <NetworkInterface autodetermine="true" priority="default" multicast="default"/>
+      </Interfaces>
+      <!-- WiFi 환경에서 멀티캐스트 손실 → discovery 실패 + retransmit 폭주를
+           막기 위해 false. 모든 discovery 는 아래 <Peers> 의 unicast 로 처리. -->
+      <AllowMulticast>false</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers>
+        <!-- EDIT: 실제 IP 로 교체 -->
+        <Peer address="192.168.1.10"/>   <!-- 로봇 PC -->
+        <Peer address="192.168.1.20"/>   <!-- 조종 PC -->
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
