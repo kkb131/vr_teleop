@@ -43,6 +43,85 @@ import time
 from datetime import datetime
 
 
+def _patch_unitree_dds_config_from_env() -> None:
+    """unitree_sdk2py 의 하드코드 cyclone XML 을 CYCLONEDDS_URI 가 가리키는
+    외부 xml 로 교체 (전략 B monkey-patch).
+
+    배경: unitree_sdk2py.core.channel.ChannelFactory.Init() 는 자체 하드코드 XML
+    문자열을 cyclonedds.Domain() 생성자에 직접 주입한다. 그래서 표준 환경변수
+    CYCLONEDDS_URI 가 rclpy/rmw_cyclonedds_cpp 경로에선 적용되어도 unitree_sdk2py
+    경로에선 무시되고, default (autodetermine + multicast) 만 적용된다. cross-PC
+    라우터/AP 가 멀티캐스트를 차단하면 sim 의 rt/lowstate 가 즉시 단절.
+
+    이 함수는 channel_config 모듈을 import 한 직후 그 안의 XML 템플릿 상수들을
+    우리 cyclonedds.xml 내용 (Peers + AllowMulticast=false 포함) 으로 직접 교체.
+    양쪽 PC 의 unitree_sdk2py 가 동일한 unicast peers 설정을 보게 됨.
+
+    docs: docs/dds_unitree_sdk2py_cross_pc_analysis.md 전략 B.
+    """
+    if os.environ.get("UNITREE_NO_DDS_PATCH"):
+        print("[unitree.py] UNITREE_NO_DDS_PATCH 설정됨 → patch skip", flush=True)
+        return
+
+    uri = os.environ.get("CYCLONEDDS_URI", "")
+    if not uri:
+        print("[unitree.py] CYCLONEDDS_URI 미설정 → patch skip "
+              "(unitree_sdk2py default XML 사용)", flush=True)
+        return
+
+    # comma-separated URI (file://...,<inline>) 의 첫 file:// 토큰만
+    first = uri.split(",", 1)[0].strip()
+    if not first.startswith("file://"):
+        print(f"[unitree.py] CYCLONEDDS_URI 가 file:// 가 아님 → patch skip "
+              f"({first[:60]})", flush=True)
+        return
+    path = first[len("file://"):]
+    if not os.path.isfile(path):
+        print(f"[unitree.py] xml 파일 없음 → patch skip ({path})", flush=True)
+        return
+
+    with open(path) as f:
+        xml = f.read()
+
+    try:
+        from unitree_sdk2py.core import channel_config as cc
+    except ImportError as e:
+        print(f"[unitree.py] unitree_sdk2py import 실패 → patch skip ({e})",
+              flush=True)
+        return
+
+    patched: list[str] = []
+    skipped: list[str] = []
+    for attr in dir(cc):
+        if attr.startswith("_"):
+            continue
+        val = getattr(cc, attr)
+        if isinstance(val, str) and "<CycloneDDS" in val and "Domain" in val:
+            setattr(cc, attr, xml)
+            patched.append(attr)
+        elif isinstance(val, str) and len(val) > 50:
+            skipped.append(attr)
+
+    if patched:
+        print(f"[unitree.py] channel_config XML 교체 완료: {patched}",
+              flush=True)
+        print(f"             ← {path}", flush=True)
+    else:
+        print(f"[unitree.py] WARN: channel_config 에 XML 템플릿 상수 못 찾음.",
+              flush=True)
+        print(f"             unitree_sdk2py 구조가 바뀐 듯 — 다음 모듈 직접 확인:",
+              flush=True)
+        print(f"             {cc.__file__}", flush=True)
+        if skipped:
+            print(f"             XML 같지 않은 str 상수들: {skipped}",
+                  flush=True)
+
+
+# import-time 즉시 패치. ChannelFactoryInitialize 가 호출되기 전에 적용되어야
+# 우리 xml 의 <Peers>/<AllowMulticast>false</> 가 sim 측 default 를 덮어쓴다.
+_patch_unitree_dds_config_from_env()
+
+
 def _print_kv(k: str, v: str) -> None:
     print(f"  {k:<22} = {v}")
 
